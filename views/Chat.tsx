@@ -407,13 +407,36 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                          .reduce((acc, [k, v]) => ({ ...acc, [k]: v }), {}) : {}
                  });
                  
+                // 如果是临时会话ID，先尝试创建会话
+                let finalSessionId = sessionIdToUse;
+                if (!sessionIdToUse.startsWith('s') && sessionIdToUse.match(/^\d+-/)) {
+                    console.log('🔄 Temporary session detected, creating real session first...');
+                    try {
+                        const savedSession = await api.sessions.create({
+                            title: language === 'zh' ? '新对话' : 'New Chat',
+                            isGroup: false,
+                            participants: activeSession.participants || ['a1']
+                        });
+                        console.log('✅ Session created automatically:', savedSession.id);
+                        finalSessionId = savedSession.id;
+                        
+                        // 通知父组件更新会话ID
+                        if (onSessionCreated) {
+                            onSessionCreated(savedSession.id);
+                        }
+                    } catch (createError: any) {
+                        console.error('❌ Failed to create session:', createError);
+                        // 继续使用临时ID，让后端处理
+                    }
+                }
+                 
                  const response = await retryWithBackoff(
                      () => {
-                         console.log('📡 Calling api.messages.send with sessionId:', sessionIdToUse, {
+                        console.log('📡 Calling api.messages.send with sessionId:', finalSessionId, {
                              hasContextData: !!activeProject?.data,
                              contextDataKeys: activeProject?.data ? Object.keys(activeProject.data) : []
                          });
-                         return api.messages.send(sessionIdToUse, textToSend, {
+                        return api.messages.send(finalSessionId, textToSend, {
                              agentId: targetAgent.id,
                              modelOverride: selectedModel,
                              contextData: activeProject?.data
@@ -443,20 +466,30 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                  let lastUpdateTime = Date.now();
                  const UPDATE_THROTTLE = 16; // 每 16ms 更新一次 UI（约60fps），实现流畅的打字效果
                  let pendingUpdate: number | null = null;
+                let hasReceivedData = false; // 跟踪是否收到任何数据
+                const STREAM_TIMEOUT = 30000; // 30秒超时
+                const streamStartTime = Date.now();
 
-                 console.log('📥 Starting SSE stream processing...', { aiMessageId, originalMessageId });
+                console.log('📥 Starting SSE stream processing...', { aiMessageId, originalMessageId });
 
                  while (true) {
                      if (abortControllerRef.current?.signal.aborted) {
-                         console.log('⚠️ Stream aborted by user');
+                        console.log('⚠️ Stream aborted by user');
                          reader.cancel();
                          break;
                      }
+
+                    // 检查超时
+                    if (Date.now() - streamStartTime > STREAM_TIMEOUT && !hasReceivedData) {
+                        console.error('⏱️ Stream timeout: No data received within 30 seconds');
+                        throw new Error('Stream timeout: No response from server');
+                    }
 
                      const { done, value } = await reader.read();
                     
                     // 处理接收到的数据
                     if (value) {
+                        hasReceivedData = true; // 标记已收到数据
                         const decoded = decoder.decode(value, { stream: true });
                         buffer += decoded;
                         console.log('📦 Received chunk:', { 
@@ -468,7 +501,14 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                     
                     // 如果流结束，处理剩余的 buffer
                      if (done) {
-                        console.log('🏁 Stream done, processing remaining buffer:', buffer.length, 'chars');
+                        console.log('🏁 Stream done, processing remaining buffer:', buffer.length, 'chars', 'hasReceivedData:', hasReceivedData);
+                        
+                        // 如果没有收到任何数据，显示错误
+                        if (!hasReceivedData && !buffer.trim()) {
+                            console.error('❌ Stream ended without any data');
+                            throw new Error('No data received from server');
+                        }
+                        
                         // 处理 buffer 中剩余的所有内容（可能包含最后一个不完整的事件）
                         if (buffer.trim()) {
                             // 尝试按SSE格式解析
@@ -476,21 +516,21 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                             for (const event of remainingEvents) {
                                 const dataLine = event.split('\n').find(line => line.startsWith('data: '));
                                 if (dataLine) {
-                                    try {
+                                try {
                                         const jsonStr = dataLine.substring(6);
                                         const data = JSON.parse(jsonStr);
-                                        
-                                        if (data.type === 'chunk') {
-                                            accumulatedText += data.content;
+                                    
+                                    if (data.type === 'chunk') {
+                                        accumulatedText += data.content;
                                             console.log('📝 Final chunk added, total length:', accumulatedText.length);
-                                        } else if (data.type === 'done') {
-                                            // 更新为数据库返回的ID，但保留原始ID用于查找
-                                            if (data.messageId) {
+                                    } else if (data.type === 'done') {
+                                        // 更新为数据库返回的ID，但保留原始ID用于查找
+                                        if (data.messageId) {
                                                 console.log('🔄 Updating message ID:', originalMessageId, '->', data.messageId);
-                                                aiMessageId = data.messageId;
-                                            }
+                                            aiMessageId = data.messageId;
                                         }
-                                    } catch (e) {
+                                    }
+                                } catch (e) {
                                         console.error('❌ Failed to parse final SSE data:', e, 'Data:', dataLine.substring(0, 100));
                                     }
                                 }
@@ -598,30 +638,47 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                         // 找到 data: 开头的行
                         const dataLine = event.split('\n').find(line => line.startsWith('data: '));
                         if (dataLine) {
-                            try {
+                             try {
                                 const jsonStr = dataLine.substring(6); // 去掉 'data: ' 前缀
                                 const data = JSON.parse(jsonStr);
                                 
                                 console.log('📨 Parsed SSE event:', { type: data.type, hasContent: !!data.content });
-                                
-                                if (data.type === 'chunk') {
-                                    accumulatedText += data.content;
+                                 
+                                 if (data.type === 'chunk') {
+                                     accumulatedText += data.content;
                                     console.log('📝 Accumulated text length:', accumulatedText.length);
                                     
+                                    // 直接使用累积的文本，不再需要清理OPTIONS_JSON标记
+                                    const cleanedContent = accumulatedText;
+                                    
+                                    // 5. 最后检查：如果还有残留，再次尝试完整匹配
+                                    if (cleanedContent.includes('OPTIONS_JSON') || cleanedContent.includes('options_json')) {
+                                        // 尝试更宽松的匹配
+                                        cleanedContent = cleanedContent.replace(/\[.*?OPTIONS.*?JSON.*?\].*?\[.*?\/.*?OPTIONS.*?JSON.*?\]/gi, '');
+                                        // 如果还有，直接移除包含这些关键词的行
+                                        const lines = cleanedContent.split('\n');
+                                        cleanedContent = lines.filter(line => 
+                                          !line.includes('OPTIONS_JSON') && 
+                                          !line.includes('options_json') &&
+                                          !line.includes('OPTIONS') ||
+                                          !line.includes('JSON')
+                                        ).join('\n').trim();
+                                    }
+                                     
                                     // 立即创建消息（如果还没有）
-                                    if (!aiMessage) {
+                                     if (!aiMessage) {
                                         console.log('✨ Creating new AI message...');
-                                        setIsTyping(false);
-                                        aiMessage = {
-                                            id: aiMessageId,
-                                            type: MessageType.AGENT,
-                                            content: accumulatedText,
-                                            senderId: targetAgent.id,
-                                            senderName: language === 'zh' ? (targetAgent.role_zh || targetAgent.name) : targetAgent.name,
-                                            senderAvatar: targetAgent.avatar,
-                                            timestamp: Date.now(),
-                                            isStreaming: true
-                                        };
+                                         setIsTyping(false);
+                                         aiMessage = {
+                                             id: aiMessageId,
+                                             type: MessageType.AGENT,
+                                            content: cleanedContent, // 使用清理后的内容
+                                             senderId: targetAgent.id,
+                                             senderName: language === 'zh' ? (targetAgent.role_zh || targetAgent.name) : targetAgent.name,
+                                             senderAvatar: targetAgent.avatar,
+                                             timestamp: Date.now(),
+                                             isStreaming: true
+                                         };
                                         setMessages(prev => {
                                             console.log('➕ Adding AI message to list, current count:', prev.length);
                                             return [...prev, aiMessage!];
@@ -642,7 +699,7 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                             pendingUpdate = requestAnimationFrame(() => {
                                          setMessages(prev => prev.map(m => {
                                              if (m.id === aiMessageId) {
-                                                 return { ...m, content: accumulatedText, isStreaming: true };
+                                                 return { ...m, content: cleanedContent, isStreaming: true }; // 使用清理后的内容
                                              }
                                              return m;
                                          }));
@@ -656,7 +713,7 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                                 pendingUpdate = requestAnimationFrame(() => {
                                                     setMessages(prev => prev.map(m => {
                                                         if (m.id === aiMessageId) {
-                                                            return { ...m, content: accumulatedText, isStreaming: true };
+                                                            return { ...m, content: cleanedContent, isStreaming: true }; // 使用清理后的内容
                                                         }
                                                         return m;
                                                     }));
@@ -680,16 +737,18 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                         accumulatedLength: accumulatedText.length 
                                     });
                                      
-                                     // 确保最终内容已更新（重要：防止内容丢失）
-                                     // 使用函数式更新，确保使用最新的accumulatedText
-                                    // 使用原始ID查找消息（因为消息可能是用原始ID创建的）
+                                    // 确保最终内容已更新
                                     setMessages(prev => {
                                         const updated = prev.map(m => {
                                             // 匹配原始ID或新ID（处理ID更新情况）
                                             if (m.id === originalMessageId || m.id === aiMessageId) {
-                                             // 强制使用完整的accumulatedText
                                                 console.log('✅ Updating message in done event:', accumulatedText.length, 'chars');
-                                             return { ...m, id: aiMessageId, content: accumulatedText, isStreaming: false };
+                                                return { 
+                                                    ...m, 
+                                                    id: aiMessageId, 
+                                                    content: accumulatedText,
+                                                    isStreaming: false
+                                                };
                                          }
                                          return m;
                                         });
@@ -735,7 +794,32 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                          }
                                      }
                                  } else if (data.type === 'error') {
-                                     throw new Error(data.error || 'AI generation failed');
+                                     console.error('❌ Received error from server:', data.error);
+                                     // 创建错误消息显示给用户
+                                     setIsTyping(false);
+                                     const errorMessage: Message = {
+                                         id: aiMessageId,
+                                         type: MessageType.AGENT,
+                                         content: language === 'zh' 
+                                             ? `❌ 错误：${data.error || 'AI生成失败'}`
+                                             : `❌ Error: ${data.error || 'AI generation failed'}`,
+                                         senderId: targetAgent.id,
+                                         senderName: language === 'zh' ? (targetAgent.role_zh || targetAgent.name) : targetAgent.name,
+                                         senderAvatar: targetAgent.avatar,
+                                         timestamp: Date.now(),
+                                         isStreaming: false
+                                     };
+                                     setMessages(prev => {
+                                         // 如果已经有消息，更新它；否则添加新消息
+                                         const existingIndex = prev.findIndex(m => m.id === aiMessageId || m.id === originalMessageId);
+                                         if (existingIndex >= 0) {
+                                             const updated = [...prev];
+                                             updated[existingIndex] = errorMessage;
+                                             return updated;
+                                         }
+                                         return [...prev, errorMessage];
+                                     });
+                                     break; // 退出循环
                                  }
                              } catch (e) {
                                  console.error('Failed to parse SSE data:', e);
@@ -746,6 +830,23 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
              } catch (error: any) {
                  // 错误处理：回滚用户消息
                  setIsTyping(false);
+                 
+                 console.error('❌ Error in handleSend:', error);
+                 
+                 // 显示错误消息给用户
+                 const errorMessage: Message = {
+                     id: generateId(),
+                     type: MessageType.AGENT,
+                     content: language === 'zh' 
+                         ? `❌ 错误：${error.message || '无法获取AI回复，请稍后重试'}`
+                         : `❌ Error: ${error.message || 'Failed to get AI response, please try again'}`,
+                     senderId: targetAgent.id,
+                     senderName: language === 'zh' ? (targetAgent.role_zh || targetAgent.name) : targetAgent.name,
+                     senderAvatar: targetAgent.avatar,
+                     timestamp: Date.now(),
+                     isStreaming: false
+                 };
+                 setMessages(prev => [...prev, errorMessage]);
                  
                  // 如果是会话不存在错误，尝试自动创建会话并重新发送消息
                  if (error.message?.includes('Session not found') || error.message?.includes('404')) {
@@ -1762,6 +1863,8 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                 </div>
                             </div>
 
+
+                            {/* 后续问题建议 */}
                             {msg.type === MessageType.AGENT && !msg.isStreaming && showFollowUps && msg.suggestedFollowUps && (
                                 <div className="flex gap-2 mt-2 ml-11 overflow-x-auto w-full pr-4 pb-2 scrollbar-hide">
                                     {msg.suggestedFollowUps.map((q, i) => (

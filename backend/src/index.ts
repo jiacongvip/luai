@@ -157,6 +157,18 @@ const server = app.listen(PORT, async () => {
   } catch (error) {
     console.error('⚠️ Failed to migrate preferences schema:', error);
   }
+
+  // 迁移 interactive_options 字段
+  try {
+    const { query } = await import('./db/connection.js');
+    await query(`
+      ALTER TABLE messages 
+      ADD COLUMN IF NOT EXISTS interactive_options JSONB
+    `);
+    console.log('✅ Interactive options column migrated');
+  } catch (error) {
+    console.error('⚠️ Failed to migrate interactive_options column:', error);
+  }
   
   // 初始化 WebSocket 服务（类似 ChatGPT、Claude 的实现）
   try {

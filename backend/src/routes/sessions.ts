@@ -97,7 +97,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
     // 获取消息
     const messagesResult = await query(
       `SELECT id, type, content, sender_id, sender_name, sender_avatar, timestamp, cost,
-              related_agent_id, thought_data, suggested_follow_ups, feedback
+              related_agent_id, thought_data, suggested_follow_ups, interactive_options, feedback
        FROM messages
        WHERE session_id = $1
        ORDER BY timestamp ASC`,
@@ -111,7 +111,19 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
       updatedAt: new Date(session.updated_at).getTime(),
       isGroup: session.is_group,
       participants: session.participants || [],
-      messages: messagesResult.rows.map((msg) => ({
+      messages: messagesResult.rows.map((msg) => {
+        // 解析 interactive_options（如果是字符串则解析为JSON）
+        let interactiveOptions = msg.interactive_options;
+        if (interactiveOptions && typeof interactiveOptions === 'string') {
+          try {
+            interactiveOptions = JSON.parse(interactiveOptions);
+          } catch (e) {
+            console.warn('Failed to parse interactive_options:', e);
+            interactiveOptions = null;
+          }
+        }
+        
+        return {
         id: msg.id,
         type: msg.type,
         content: msg.content,
@@ -123,8 +135,10 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
         relatedAgentId: msg.related_agent_id,
         thoughtData: msg.thought_data,
         suggestedFollowUps: msg.suggested_follow_ups,
+          interactiveOptions: interactiveOptions,
         feedback: msg.feedback,
-      })),
+        };
+      }),
     });
   } catch (error: any) {
     console.error('Get session error:', error);

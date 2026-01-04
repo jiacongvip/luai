@@ -218,7 +218,7 @@ async function* generateWithConfigApi(
   let readCount = 0;
   let yieldCount = 0;
   console.log('🔄 Starting to read stream from upstream API...');
-  
+
   try {
     while (true) {
       const { done, value } = await reader.read();

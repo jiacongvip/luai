@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS messages (
   related_agent_id VARCHAR(255),
   thought_data JSONB,
   suggested_follow_ups JSONB,
+  interactive_options JSONB,
   feedback VARCHAR(20)
 );
 

@@ -278,6 +278,9 @@ const App: React.FC = () => {
     const loadSessionMessages = async () => {
       if (!activeSessionId) return;
       
+      // 延迟加载，给SSE流一些时间完成（特别是新创建的会话）
+      await new Promise(resolve => setTimeout(resolve, 500));
+      
       try {
         // 从数据库加载完整会话（包含消息）
         const session = await api.sessions.getById(activeSessionId);
@@ -291,7 +294,7 @@ const App: React.FC = () => {
           
           // 合并数据库中的消息和正在流式更新的消息
           const dbMessages = session.messages || [];
-          const mergedMessages = [...dbMessages];
+          let mergedMessages = [...dbMessages];
           
           // 如果有流式消息，确保它们被保留（替换或追加）
           if (streamingMessages.length > 0) {
@@ -305,6 +308,12 @@ const App: React.FC = () => {
                 mergedMessages.push(streamingMsg);
               }
             });
+          }
+          
+          // 如果数据库中没有消息，但当前会话有消息（可能是正在流式传输），保留当前消息
+          if (mergedMessages.length === 0 && currentSession?.messages && currentSession.messages.length > 0) {
+            console.log('📝 Preserving existing messages during session switch:', currentSession.messages.length);
+            mergedMessages = [...currentSession.messages];
           }
           
           const updated = prev.map(s => 
@@ -322,9 +331,60 @@ const App: React.FC = () => {
           return updated;
         });
       } catch (error: any) {
-        // 404 错误是正常的（新创建的会话可能还没有保存到数据库）
+        // 404 错误是正常的（新创建的会话可能还没有保存到数据库，或者正在创建中）
         if (error.message?.includes('404') || error.message?.includes('not found')) {
-          console.log('Session not found in database (may be new):', activeSessionId);
+          console.log('Session not found in database (may be new or creating):', activeSessionId);
+          
+          // 如果是新会话，保留当前显示的消息（如果有）
+          setSessions(prev => {
+            const currentSession = prev.find(s => s.id === activeSessionId);
+            if (currentSession && currentSession.messages && currentSession.messages.length > 0) {
+              console.log('📝 Preserving messages for new session:', currentSession.messages.length);
+              // 保持当前会话的消息不变
+              return prev;
+            }
+            // 即使没有消息，也保持会话存在（可能是刚创建的）
+            return prev;
+          });
+          
+          // 如果是真实会话ID（以's'开头），延迟重试加载（可能正在创建中）
+          if (activeSessionId.startsWith('s')) {
+            console.log('🔄 Real session ID detected, will retry loading after delay...');
+            setTimeout(async () => {
+              try {
+                const session = await api.sessions.getById(activeSessionId);
+                setSessions(prev => {
+                  const currentSession = prev.find(s => s.id === activeSessionId);
+                  const streamingMessages = currentSession?.messages?.filter(m => m.isStreaming) || [];
+                  const dbMessages = session.messages || [];
+                  let mergedMessages = [...dbMessages];
+                  
+                  if (streamingMessages.length > 0) {
+                    streamingMessages.forEach(streamingMsg => {
+                      const existingIndex = mergedMessages.findIndex(m => m.id === streamingMsg.id);
+                      if (existingIndex >= 0) {
+                        mergedMessages[existingIndex] = streamingMsg;
+                      } else {
+                        mergedMessages.push(streamingMsg);
+                      }
+                    });
+                  }
+                  
+                  if (mergedMessages.length === 0 && currentSession?.messages && currentSession.messages.length > 0) {
+                    mergedMessages = [...currentSession.messages];
+                  }
+                  
+                  return prev.map(s => 
+                    s.id === activeSessionId 
+                      ? { ...s, messages: mergedMessages, lastMessage: session.lastMessage, updatedAt: session.updatedAt }
+                      : s
+                  );
+                });
+              } catch (retryError: any) {
+                console.log('Retry load still failed (session may still be creating):', retryError.message);
+              }
+            }, 1000);
+          }
           return;
         }
         console.error('Failed to load session messages:', error);
@@ -735,7 +795,41 @@ const App: React.FC = () => {
       }
   };
 
-  const handleSelectAgentFromMarketplace = (agent: Agent) => {
+  const handleSelectAgentFromMarketplace = async (agent: Agent) => {
+      try {
+          // 立即创建真实会话，而不是使用临时ID
+          const savedSession = await api.sessions.create({
+              title: agent.name,
+              isGroup: false,
+              participants: [agent.id]
+          });
+          
+          console.log('✅ Session created from agent marketplace:', savedSession.id);
+          
+          const newSession: ChatSession = {
+              id: savedSession.id,
+              title: agent.name,
+              lastMessage: '',
+              updatedAt: Date.now(),
+              messages: [{ 
+                  id: `init-${savedSession.id}`, 
+                  type: MessageType.AGENT, 
+                  content: language === 'zh' ? `你好，我是${agent.name}。` : `Hello, I am ${agent.name}. How can I assist you?`,
+                  senderId: agent.id, 
+                  timestamp: Date.now(), 
+                  senderName: agent.name,
+                  senderAvatar: agent.avatar
+              }],
+              isGroup: false,
+              participants: [agent.id]
+          };
+          
+          setSessions(prev => [newSession, ...prev]);
+          setActiveSessionId(savedSession.id);
+          setCurrentRoute(AppRoute.CHAT);
+      } catch (error: any) {
+          console.error('❌ Failed to create session from agent marketplace:', error);
+          // 如果创建失败，回退到临时会话
       const newId = generateId();
       const newSession: ChatSession = {
           id: newId,
@@ -757,6 +851,7 @@ const App: React.FC = () => {
       setSessions(prev => [newSession, ...prev]);
       setActiveSessionId(newId);
       setCurrentRoute(AppRoute.CHAT);
+      }
   };
 
   const handleStartPrivateChat = (agentId: string) => {
@@ -1153,8 +1248,16 @@ const App: React.FC = () => {
             onSessionCreated={async (newSessionId) => {
               // 当Chat组件自动创建会话后，更新App的状态
               console.log('🔄 Updating session ID from Chat:', newSessionId);
+              
+              // 保存当前会话的消息（可能正在流式传输）
+              const currentSession = sessions.find(s => s.id === activeSessionId);
+              const currentMessages = currentSession?.messages || [];
+              const streamingMessages = currentMessages.filter(m => m.isStreaming || m.type === 'USER');
+              
               setActiveSessionId(newSessionId);
-              // 重新加载会话列表以获取新会话
+              
+              // 延迟重新加载会话列表，给SSE流一些时间完成
+              setTimeout(async () => {
               try {
                 const sessionsData = await api.sessions.getAll();
                 const updatedSessions = sessionsData.map((s: any) => ({
@@ -1166,7 +1269,7 @@ const App: React.FC = () => {
                   isGroup: s.isGroup,
                   participants: s.participants || []
                 }));
-                setSessions(updatedSessions);
+                  
                 // 找到新创建的会话并设置为active
                 const newSession = updatedSessions.find((s: ChatSession) => s.id === newSessionId);
                 if (newSession) {
@@ -1174,8 +1277,8 @@ const App: React.FC = () => {
                   try {
                     const sessionMessagesResponse = await api.messages.getBySession(newSessionId);
                     // API 返回格式为 { messages: [...], pagination: {...} }
-                    const messages = sessionMessagesResponse?.messages || [];
-                    newSession.messages = messages.map((m: any) => ({
+                      const dbMessages = sessionMessagesResponse?.messages || [];
+                      const mappedMessages = dbMessages.map((m: any) => ({
                       id: m.id,
                       type: m.type as MessageType,
                       content: m.content,
@@ -1183,9 +1286,43 @@ const App: React.FC = () => {
                       senderName: m.senderName,
                       senderAvatar: m.senderAvatar,
                       timestamp: m.timestamp,
-                      isStreaming: false
-                    }));
-                    setSessions(prev => prev.map(s => s.id === newSessionId ? newSession : s));
+                        isStreaming: false,
+                        interactiveOptions: m.interactiveOptions
+                      }));
+                      
+                      // 合并数据库消息和正在流式传输的消息
+                      let mergedMessages = [...mappedMessages];
+                      if (streamingMessages.length > 0) {
+                        streamingMessages.forEach(streamingMsg => {
+                          const existingIndex = mergedMessages.findIndex(m => m.id === streamingMsg.id);
+                          if (existingIndex >= 0) {
+                            // 如果数据库中有相同ID的消息，但流式消息可能更新，保留流式消息
+                            mergedMessages[existingIndex] = streamingMsg;
+                          } else {
+                            // 如果数据库中没有，追加流式消息
+                            mergedMessages.push(streamingMsg);
+                          }
+                        });
+                      }
+                      
+                      newSession.messages = mergedMessages;
+                      // 更新会话列表，将新会话的消息设置为合并后的消息
+                      setSessions(prev => {
+                        // 如果新会话已经在列表中，更新它；否则添加到列表
+                        const existingIndex = prev.findIndex(s => s.id === newSessionId);
+                        if (existingIndex >= 0) {
+                          const updated = [...prev];
+                          updated[existingIndex] = newSession;
+                          return updated;
+                        } else {
+                          // 如果不在列表中，从 updatedSessions 中找到并添加
+                          const sessionToAdd = updatedSessions.find(s => s.id === newSessionId);
+                          if (sessionToAdd) {
+                            return [sessionToAdd, ...prev];
+                          }
+                          return prev;
+                        }
+                      });
                   } catch (e) {
                     console.error('Failed to load new session messages:', e);
                   }
@@ -1193,6 +1330,7 @@ const App: React.FC = () => {
               } catch (e) {
                 console.error('Failed to reload sessions:', e);
               }
+              }, 500);
             }} 
             agents={agents} // Pass Global Agents
             enableStylePrompt={enableStylePrompt} // PASS SETTING TO CHAT

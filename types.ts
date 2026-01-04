@@ -110,6 +110,12 @@ export interface ThoughtData {
     manualOverride?: boolean;
 }
 
+export interface InteractiveOption {
+  label: string; // 显示文本
+  value: string; // 选择后发送的值
+  description?: string; // 可选描述
+}
+
 export interface Message {
   id: string;
   type: MessageType;
@@ -124,6 +130,7 @@ export interface Message {
   thoughtData?: ThoughtData;
   // New interaction fields
   suggestedFollowUps?: string[];
+  interactiveOptions?: InteractiveOption[]; // 选项式交互（如：选择目标受众）
   feedback?: 'like' | 'dislike' | null;
 }
 

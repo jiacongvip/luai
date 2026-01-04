@@ -141,13 +141,13 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
                                     >
                                         <BookOpen size={12}/> {language === 'zh' ? '模板库' : 'Templates'}
                                     </button>
-                                    <button 
-                                        onClick={() => setShowAIPromptInput(!showAIPromptInput)}
-                                        className="flex items-center gap-1.5 px-3 py-1 bg-accent/10 border border-accent/20 rounded-lg text-[10px] font-bold text-accent hover:bg-accent hover:text-white transition-all shadow-sm"
-                                    >
-                                        <Sparkles size={12}/> AI Assist
-                                    </button>
-                                </div>
+                                <button 
+                                    onClick={() => setShowAIPromptInput(!showAIPromptInput)}
+                                    className="flex items-center gap-1.5 px-3 py-1 bg-accent/10 border border-accent/20 rounded-lg text-[10px] font-bold text-accent hover:bg-accent hover:text-white transition-all shadow-sm"
+                                >
+                                    <Sparkles size={12}/> AI Assist
+                                </button>
+                            </div>
                             </div>
 
                             {showTemplateSelector && (

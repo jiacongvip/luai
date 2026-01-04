@@ -30,7 +30,7 @@ router.get('/session/:sessionId', authenticate, async (req: AuthRequest, res) =>
     // 构建分页查询
     let sql = `
       SELECT id, type, content, sender_id, sender_name, sender_avatar, timestamp, cost,
-             related_agent_id, thought_data, suggested_follow_ups, feedback
+             related_agent_id, thought_data, suggested_follow_ups, interactive_options, feedback
       FROM messages
       WHERE session_id = $1
     `;
@@ -71,7 +71,19 @@ router.get('/session/:sessionId', authenticate, async (req: AuthRequest, res) =>
     );
 
     res.json({
-      messages: messages.map((msg: any) => ({
+      messages: messages.map((msg: any) => {
+        // 解析 interactive_options（如果是字符串则解析为JSON）
+        let interactiveOptions = msg.interactive_options;
+        if (interactiveOptions && typeof interactiveOptions === 'string') {
+          try {
+            interactiveOptions = JSON.parse(interactiveOptions);
+          } catch (e) {
+            console.warn('Failed to parse interactive_options:', e);
+            interactiveOptions = null;
+          }
+        }
+        
+        return {
         id: msg.id,
         type: msg.type,
         content: msg.content,
@@ -83,8 +95,10 @@ router.get('/session/:sessionId', authenticate, async (req: AuthRequest, res) =>
         relatedAgentId: msg.related_agent_id,
         thoughtData: msg.thought_data,
         suggestedFollowUps: msg.suggested_follow_ups,
+          interactiveOptions: interactiveOptions,
         feedback: msg.feedback,
-      })),
+        };
+      }),
       pagination: {
         total: parseInt(countResult.rows[0].total),
         hasMore: messages.length === Number(limit),
@@ -274,10 +288,14 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
         promptLength: fullPrompt.length,
         contextPromptLength: contextPrompt.length,
         contentLength: content.length,
-        hasContext: contextPrompt.length > 0
+        hasContext: contextPrompt.length > 0,
+        modelOverride: modelOverride || 'default'
       });
       let chunkCount = 0;
+      let hasYieldedChunk = false;
       console.log('🔄 Starting stream iteration...');
+      
+      try {
       for await (const chunk of generateChatStream(
         fullPrompt,
         systemPrompt,
@@ -285,28 +303,46 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
         userPreferences,
         contextData?._successful_examples_
       )) {
+          hasYieldedChunk = true;
         chunkCount++;
         fullResponse += chunk;
-        // 调试：打印每个 chunk
-        if (chunkCount <= 5 || chunkCount % 10 === 0) {
-          console.log(`📦 Chunk ${chunkCount}: "${chunk.substring(0, 50)}..." (${chunk.length} chars)`);
-        }
+          // 调试：打印每个 chunk
+          if (chunkCount <= 5 || chunkCount % 10 === 0) {
+            console.log(`📦 Chunk ${chunkCount}: "${chunk.substring(0, 50)}..." (${chunk.length} chars)`);
+          }
         // 立即发送每个 chunk，确保流式输出流畅
-        const sseData = `data: ${JSON.stringify({ type: 'chunk', content: chunk })}\n\n`;
-        const success = res.write(sseData);
-        
-        // 如果写入缓冲区满，等待 drain 事件
-        if (!success) {
-          console.log('⚠️ Buffer full, waiting for drain...');
-          await new Promise<void>(resolve => res.once('drain', resolve));
+          const sseData = `data: ${JSON.stringify({ type: 'chunk', content: chunk })}\n\n`;
+          const success = res.write(sseData);
+          
+          // 如果写入缓冲区满，等待 drain 事件
+          if (!success) {
+            console.log('⚠️ Buffer full, waiting for drain...');
+            await new Promise<void>(resolve => res.once('drain', resolve));
+          }
         }
-      }
+        
+        // 如果没有收到任何chunk，发送错误
+        if (!hasYieldedChunk) {
+          console.error('❌ No chunks yielded from generateChatStream');
+          const errorData = `data: ${JSON.stringify({ type: 'error', error: 'AI service returned no response. Please check API configuration.' })}\n\n`;
+          res.write(errorData);
+          res.end();
+          return;
+        }
+        
       console.log(`✅ AI generation completed: ${chunkCount} chunks, ${fullResponse.length} chars`);
+      } catch (streamError: any) {
+        console.error('❌ Error in stream generation:', streamError);
+        const errorData = `data: ${JSON.stringify({ type: 'error', error: streamError.message || 'AI generation failed' })}\n\n`;
+        res.write(errorData);
+        res.end();
+        return;
+      }
 
       // 保存 AI 响应
       await query(
-        `INSERT INTO messages (id, session_id, type, content, sender_id, sender_name, timestamp, related_agent_id)
-         VALUES ($1, $2, 'AGENT', $3, $4, $5, $6, $7)`,
+        `INSERT INTO messages (id, session_id, type, content, sender_id, sender_name, timestamp, related_agent_id, interactive_options)
+         VALUES ($1, $2, 'AGENT', $3, $4, $5, $6, $7, $8)`,
         [
           aiMessageId,
           sessionId,
@@ -315,11 +351,19 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
           agentName,
           Date.now().toString(),
           agentId || 'a1',
+          null, // 不再保存交互式选项
         ]
       );
 
       // 发送完成信号
-      res.write(`data: ${JSON.stringify({ type: 'done', messageId: aiMessageId })}\n\n`);
+      const doneEvent = {
+        type: 'done',
+        messageId: aiMessageId,
+      };
+      console.log('📤 Sending done event:', { 
+        messageId: aiMessageId,
+      });
+      res.write(`data: ${JSON.stringify(doneEvent)}\n\n`);
       res.end();
     } catch (error: any) {
       console.error('AI generation error:', error);
