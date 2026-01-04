@@ -80,9 +80,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       },
       { id: 'wf-1', name: 'Customer Support Triaging', description: 'Classify tickets and route to agents.', nodes: [], edges: [], status: 'published', updatedAt: Date.now(), createdBy: 'Admin' }
   ]);
-
+  
   // Agents state removed here, using prop 'agents' instead
-
+  
   // Agent Categories State
   const [agentCategories, setAgentCategories] = useState<string[]>(() => storage.loadAgentCategories());
 
@@ -1164,28 +1164,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       
       {editingTemplate && <TemplateEditModal />}
       {editingSquad && <SquadEditModal />}
-      
+
       {/* Tab Content */}
-      {activeTab === 'analytics' && renderAnalytics()}
-      {activeTab === 'users' && renderUserTable()}
-      {activeTab === 'agents' && renderAgentList()}
-      {activeTab === 'squads' && renderSquads()}
+            {activeTab === 'analytics' && renderAnalytics()}
+            {activeTab === 'users' && renderUserTable()}
+            {activeTab === 'agents' && renderAgentList()}
+            {activeTab === 'squads' && renderSquads()}
       {activeTab === 'workflows' && renderWorkflows()}
-      {activeTab === 'templates' && renderTemplates()}
+            {activeTab === 'templates' && renderTemplates()}
       {activeTab === 'knowledge' && renderKnowledgeBase()}
       {activeTab === 'onboarding' && renderOnboardingConfig()}
       {activeTab === 'audit' && renderAuditLogs()}
-      {activeTab === 'settings' && (
-        <SettingsTab 
-          language={language} 
-          agentCategories={agentCategories}
-          onUpdateCategories={handleUpdateCategories}
-          onToggleTrendAnalysis={onToggleTrendAnalysis}
-          onToggleStylePrompt={onToggleStylePrompt}
-          onToggleSimulator={onToggleSimulator}
-          onToggleGoalLanding={onToggleGoalLanding}
-        />
-      )}
+            {activeTab === 'settings' && (
+              <SettingsTab 
+                language={language} 
+                agentCategories={agentCategories}
+                onUpdateCategories={handleUpdateCategories}
+                onToggleTrendAnalysis={onToggleTrendAnalysis}
+                onToggleStylePrompt={onToggleStylePrompt}
+                onToggleSimulator={onToggleSimulator}
+                onToggleGoalLanding={onToggleGoalLanding}
+              />
+            )}
     </div>
   );
 

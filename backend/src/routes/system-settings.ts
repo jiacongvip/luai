@@ -18,12 +18,26 @@ const DEFAULT_SYSTEM_SETTINGS = {
   showRichActions: true,
   allowModelSelect: true,
   
-  // 模型配置
-  modelName: 'gemini-3-flash-preview',
+  // 模型配置（根据 NewAPI 实际配置的渠道）
+  modelName: 'deepseek-chat',
   availableModels: [
-    { id: 'gemini-3-flash-preview', name: 'Gemini 3 Flash' },
-    { id: 'gemini-3-pro-preview', name: 'Gemini 3 Pro' },
-    { id: 'gemini-flash-lite-latest', name: 'Gemini Flash Lite' },
+    // DeepSeek
+    { id: 'deepseek-chat', name: 'DeepSeek Chat' },
+    { id: 'deepseek-coder', name: 'DeepSeek Coder' },
+    { id: 'deepseek-reasoner', name: 'DeepSeek R1 推理' },
+    // 豆包 (Doubao)
+    { id: 'doubao-pro-32k', name: '豆包 Pro 32K' },
+    { id: 'doubao-pro-128k', name: '豆包 Pro 128K' },
+    { id: 'doubao-lite-32k', name: '豆包 Lite 32K' },
+    // MiniMax
+    { id: 'abab6.5s-chat', name: 'MiniMax abab6.5s' },
+    { id: 'abab6.5-chat', name: 'MiniMax abab6.5' },
+    { id: 'abab5.5s-chat', name: 'MiniMax abab5.5s' },
+    // GLM (智谱)
+    { id: 'glm-4', name: 'GLM-4' },
+    { id: 'glm-4-flash', name: 'GLM-4 Flash' },
+    { id: 'glm-4-air', name: 'GLM-4 Air' },
+    { id: 'glm-3-turbo', name: 'GLM-3 Turbo' },
   ],
   
   // 智能体分类

@@ -397,8 +397,14 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                      textToSend, 
                      agentId: targetAgent.id,
                      hasActiveProject: !!activeProject,
+                     activeProjectId: activeProject?.id,
+                     activeProjectName: activeProject?.name,
                      hasContextData: !!activeProject?.data,
-                     contextDataKeys: activeProject?.data ? Object.keys(activeProject.data) : []
+                     contextDataKeys: activeProject?.data ? Object.keys(activeProject.data) : [],
+                     contextDataSample: activeProject?.data ? Object.entries(activeProject.data)
+                         .filter(([k]) => !k.startsWith('_') && k !== 'documents')
+                         .slice(0, 3)
+                         .reduce((acc, [k, v]) => ({ ...acc, [k]: v }), {}) : {}
                  });
                  
                  const response = await retryWithBackoff(
@@ -438,8 +444,11 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                  const UPDATE_THROTTLE = 16; // 每 16ms 更新一次 UI（约60fps），实现流畅的打字效果
                  let pendingUpdate: number | null = null;
 
+                 console.log('📥 Starting SSE stream processing...', { aiMessageId, originalMessageId });
+
                  while (true) {
                      if (abortControllerRef.current?.signal.aborted) {
+                         console.log('⚠️ Stream aborted by user');
                          reader.cancel();
                          break;
                      }
@@ -448,28 +457,42 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                     
                     // 处理接收到的数据
                     if (value) {
-                        buffer += decoder.decode(value, { stream: true });
+                        const decoded = decoder.decode(value, { stream: true });
+                        buffer += decoded;
+                        console.log('📦 Received chunk:', { 
+                            chunkLength: decoded.length, 
+                            bufferLength: buffer.length,
+                            hasDataPrefix: buffer.includes('data: ')
+                        });
                     }
                     
                     // 如果流结束，处理剩余的 buffer
                      if (done) {
-                        // 处理 buffer 中剩余的所有内容
-                        const allLines = buffer.split('\n');
-                        for (const line of allLines) {
-                            if (line.trim() && line.startsWith('data: ')) {
-                                try {
-                                    const data = JSON.parse(line.substring(6));
-                                    
-                                    if (data.type === 'chunk') {
-                                        accumulatedText += data.content;
-                                    } else if (data.type === 'done') {
-                                        // 更新为数据库返回的ID，但保留原始ID用于查找
-                                        if (data.messageId) {
-                                            aiMessageId = data.messageId;
+                        console.log('🏁 Stream done, processing remaining buffer:', buffer.length, 'chars');
+                        // 处理 buffer 中剩余的所有内容（可能包含最后一个不完整的事件）
+                        if (buffer.trim()) {
+                            // 尝试按SSE格式解析
+                            const remainingEvents = buffer.split('\n\n');
+                            for (const event of remainingEvents) {
+                                const dataLine = event.split('\n').find(line => line.startsWith('data: '));
+                                if (dataLine) {
+                                    try {
+                                        const jsonStr = dataLine.substring(6);
+                                        const data = JSON.parse(jsonStr);
+                                        
+                                        if (data.type === 'chunk') {
+                                            accumulatedText += data.content;
+                                            console.log('📝 Final chunk added, total length:', accumulatedText.length);
+                                        } else if (data.type === 'done') {
+                                            // 更新为数据库返回的ID，但保留原始ID用于查找
+                                            if (data.messageId) {
+                                                console.log('🔄 Updating message ID:', originalMessageId, '->', data.messageId);
+                                                aiMessageId = data.messageId;
+                                            }
                                         }
+                                    } catch (e) {
+                                        console.error('❌ Failed to parse final SSE data:', e, 'Data:', dataLine.substring(0, 100));
                                     }
-                                } catch (e) {
-                                    console.error('Failed to parse final SSE data:', e);
                                 }
                             }
                         }
@@ -565,32 +588,44 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                          break;
                      }
 
-                    // 处理 buffer 中的完整行
-                     const lines = buffer.split('\n');
-                     buffer = lines.pop() || '';
+                    // 处理 buffer 中的完整行（SSE格式：data: {...}\n\n）
+                    // 按双换行符分割，因为SSE事件之间用\n\n分隔
+                    const events = buffer.split('\n\n');
+                    // 保留最后一个不完整的事件在buffer中
+                    buffer = events.pop() || '';
 
-                     for (const line of lines) {
-                         if (line.startsWith('data: ')) {
-                             try {
-                                 const data = JSON.parse(line.substring(6));
-                                 
-                                 if (data.type === 'chunk') {
-                                     accumulatedText += data.content;
-                                     
+                    for (const event of events) {
+                        // 找到 data: 开头的行
+                        const dataLine = event.split('\n').find(line => line.startsWith('data: '));
+                        if (dataLine) {
+                            try {
+                                const jsonStr = dataLine.substring(6); // 去掉 'data: ' 前缀
+                                const data = JSON.parse(jsonStr);
+                                
+                                console.log('📨 Parsed SSE event:', { type: data.type, hasContent: !!data.content });
+                                
+                                if (data.type === 'chunk') {
+                                    accumulatedText += data.content;
+                                    console.log('📝 Accumulated text length:', accumulatedText.length);
+                                    
                                     // 立即创建消息（如果还没有）
-                                     if (!aiMessage) {
-                                         setIsTyping(false);
-                                         aiMessage = {
-                                             id: aiMessageId,
-                                             type: MessageType.AGENT,
-                                             content: accumulatedText,
-                                             senderId: targetAgent.id,
-                                             senderName: language === 'zh' ? (targetAgent.role_zh || targetAgent.name) : targetAgent.name,
-                                             senderAvatar: targetAgent.avatar,
-                                             timestamp: Date.now(),
-                                             isStreaming: true
-                                         };
-                                         setMessages(prev => [...prev, aiMessage!]);
+                                    if (!aiMessage) {
+                                        console.log('✨ Creating new AI message...');
+                                        setIsTyping(false);
+                                        aiMessage = {
+                                            id: aiMessageId,
+                                            type: MessageType.AGENT,
+                                            content: accumulatedText,
+                                            senderId: targetAgent.id,
+                                            senderName: language === 'zh' ? (targetAgent.role_zh || targetAgent.name) : targetAgent.name,
+                                            senderAvatar: targetAgent.avatar,
+                                            timestamp: Date.now(),
+                                            isStreaming: true
+                                        };
+                                        setMessages(prev => {
+                                            console.log('➕ Adding AI message to list, current count:', prev.length);
+                                            return [...prev, aiMessage!];
+                                        });
                                         lastUpdateTime = Date.now();
                                     } else {
                                         // 使用 requestAnimationFrame 实现流畅的打字效果

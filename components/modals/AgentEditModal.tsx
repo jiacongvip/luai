@@ -3,7 +3,8 @@ import React, { useState } from 'react';
 import { Agent, Language } from '../../types';
 import { translations } from '../../utils/translations';
 import { generateSystemPrompt } from '../../services/geminiService';
-import { X, Sparkles, Loader2, Zap, FileText, Upload, Plus } from 'lucide-react';
+import { getAllTemplates, getPromptTemplate, PromptTemplate } from '../../utils/promptTemplates';
+import { X, Sparkles, Loader2, Zap, FileText, Upload, Plus, BookOpen } from 'lucide-react';
 
 interface AgentEditModalProps {
     agent: Agent;
@@ -18,6 +19,7 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
     const [isGeneratingPrompt, setIsGeneratingPrompt] = useState(false);
     const [promptBrief, setPromptBrief] = useState('');
     const [showAIPromptInput, setShowAIPromptInput] = useState(false);
+    const [showTemplateSelector, setShowTemplateSelector] = useState(false);
     const [newStyle, setNewStyle] = useState('');
 
     const tCommon = translations[language]?.common || translations['en'].common;
@@ -55,6 +57,18 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
             ...prev,
             styles: prev.styles?.filter(s => s !== styleToRemove)
         }));
+    };
+
+    const handleSelectTemplate = (template: PromptTemplate) => {
+        setFormData(prev => ({
+            ...prev,
+            systemPrompt: template.systemPrompt,
+            name: prev.name || (language === 'zh' ? template.nameZh : template.name),
+            description: prev.description || (language === 'zh' ? template.descriptionZh : template.description),
+            description_zh: prev.description_zh || template.descriptionZh,
+            category: prev.category || template.category,
+        }));
+        setShowTemplateSelector(false);
     };
 
     const handleSave = () => {
@@ -120,13 +134,54 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
                         <div className="space-y-6">
                             <div className="flex items-center justify-between border-b border-border pb-2">
                                 <h4 className="font-bold text-primary">{t.agentModal.logic}</h4>
-                                <button 
-                                    onClick={() => setShowAIPromptInput(!showAIPromptInput)}
-                                    className="flex items-center gap-1.5 px-3 py-1 bg-accent/10 border border-accent/20 rounded-lg text-[10px] font-bold text-accent hover:bg-accent hover:text-white transition-all shadow-sm"
-                                >
-                                    <Sparkles size={12}/> AI Assist
-                                </button>
+                                <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => setShowTemplateSelector(!showTemplateSelector)}
+                                        className="flex items-center gap-1.5 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-lg text-[10px] font-bold text-blue-500 hover:bg-blue-500 hover:text-white transition-all shadow-sm"
+                                    >
+                                        <BookOpen size={12}/> {language === 'zh' ? '模板库' : 'Templates'}
+                                    </button>
+                                    <button 
+                                        onClick={() => setShowAIPromptInput(!showAIPromptInput)}
+                                        className="flex items-center gap-1.5 px-3 py-1 bg-accent/10 border border-accent/20 rounded-lg text-[10px] font-bold text-accent hover:bg-accent hover:text-white transition-all shadow-sm"
+                                    >
+                                        <Sparkles size={12}/> AI Assist
+                                    </button>
+                                </div>
                             </div>
+
+                            {showTemplateSelector && (
+                                <div className="p-4 bg-blue-500/5 border border-blue-500/20 rounded-xl space-y-3 animate-fade-in shadow-inner">
+                                    <p className="text-[10px] font-bold text-blue-500 uppercase tracking-widest">
+                                        {language === 'zh' ? '提示词模板库' : 'Prompt Template Library'}
+                                    </p>
+                                    <div className="space-y-2 max-h-60 overflow-y-auto">
+                                        {getAllTemplates().map(template => (
+                                            <button
+                                                key={template.id}
+                                                onClick={() => handleSelectTemplate(template)}
+                                                className="w-full text-left p-3 bg-background border border-border rounded-lg hover:border-blue-500 hover:bg-blue-500/5 transition-all"
+                                            >
+                                                <div className="font-bold text-sm text-textMain">
+                                                    {language === 'zh' ? template.nameZh : template.name}
+                                                </div>
+                                                <div className="text-xs text-textSecondary mt-1">
+                                                    {language === 'zh' ? template.descriptionZh : template.description}
+                                                </div>
+                                                <div className="text-[10px] text-blue-500 mt-1">
+                                                    {language === 'zh' ? '点击应用此模板' : 'Click to apply'}
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <button 
+                                        onClick={() => setShowTemplateSelector(false)} 
+                                        className="w-full px-3 py-1 text-[10px] font-bold text-textSecondary hover:bg-background rounded"
+                                    >
+                                        {language === 'zh' ? '取消' : 'Cancel'}
+                                    </button>
+                                </div>
+                            )}
 
                             {showAIPromptInput && (
                                 <div className="p-4 bg-accent/5 border border-accent/20 rounded-xl space-y-3 animate-fade-in shadow-inner">

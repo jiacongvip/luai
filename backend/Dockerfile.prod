@@ -1,0 +1,26 @@
+# 后端生产环境 Dockerfile
+FROM node:18-alpine
+
+WORKDIR /app
+
+# 安装必要的工具
+RUN apk add --no-cache git
+
+# 复制 package 文件
+COPY package*.json ./
+
+# 安装生产依赖（不安装 devDependencies）
+RUN npm ci --only=production
+
+# 复制源代码
+COPY . .
+
+# 构建 TypeScript（如果需要）
+# RUN npm run build
+
+# 暴露端口
+EXPOSE 3001
+
+# 生产环境启动命令
+CMD ["npx", "tsx", "src/index.ts"]
+

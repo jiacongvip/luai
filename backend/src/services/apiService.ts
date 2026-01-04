@@ -162,19 +162,9 @@ async function* generateWithConfigApi(
     });
   }
 
-  // 选择模型
-  // 如果 modelOverride 是 gemini-3-flash-preview 或其他 Gemini 模型，需要映射到 NewAPI 支持的模型
-  let model = modelOverride;
-  if (modelOverride && (modelOverride.includes('gemini') || modelOverride.includes('flash'))) {
-    // 如果指定了 Gemini 模型，尝试从 modelMapping 中查找映射
-    // 先尝试精确匹配，再尝试 'default'
-    model = config.modelMapping?.[modelOverride] || config.modelMapping?.['default'] || 'deepseek-chat';
-    console.log(`🔄 Mapping Gemini model "${modelOverride}" to "${model}" for ${config.provider} API`);
-  } else {
-    model = modelOverride || (config.modelMapping?.['default'] || 'deepseek-chat');
-  }
-  
-  console.log(`📝 Using model: ${model} (original: ${modelOverride || 'default'})`);
+  // 选择模型：直接使用前端传来的模型名称，或使用默认值
+  const model = modelOverride || config.modelMapping?.['default'] || 'deepseek-chat';
+  console.log(`📝 Using model: ${model}`);
   
   // 构建请求
   const requestConfig = config.requestConfig || {};

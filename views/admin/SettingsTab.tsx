@@ -191,13 +191,13 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ language, agentCategories, on
             });
             
             // 触发父组件的回调（更新 App.tsx 状态）
-            if (onToggleTrendAnalysis) onToggleTrendAnalysis(showTrendAnalysis);
-            if (onToggleSimulator) onToggleSimulator(showSimulator); 
-            if (onToggleStylePrompt) onToggleStylePrompt(enableStylePrompt);
-            if (onToggleGoalLanding) onToggleGoalLanding(showGoalLanding);
-            
-            setShowSaveToast(true);
-            setTimeout(() => setShowSaveToast(false), 3000);
+        if (onToggleTrendAnalysis) onToggleTrendAnalysis(showTrendAnalysis);
+        if (onToggleSimulator) onToggleSimulator(showSimulator); 
+        if (onToggleStylePrompt) onToggleStylePrompt(enableStylePrompt);
+        if (onToggleGoalLanding) onToggleGoalLanding(showGoalLanding);
+        
+        setShowSaveToast(true);
+        setTimeout(() => setShowSaveToast(false), 3000);
             console.log('✅ System settings saved (global for all users)');
         } catch (error) {
             console.error('Failed to save system settings:', error);

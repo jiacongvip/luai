@@ -172,13 +172,77 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
         }
       }
 
-      // 构建上下文提示
+      // 获取对话历史（最近20条消息，避免token过多）
+      // 注意：排除当前刚插入的用户消息，因为我们会单独添加
+      const historyResult = await query(
+        `SELECT type, content, sender_name, timestamp 
+         FROM messages 
+         WHERE session_id = $1 AND id != $2
+         ORDER BY timestamp ASC 
+         LIMIT 20`,
+        [sessionId, userMessageId]
+      );
+      
+      // 构建对话历史
+      let conversationHistory = '';
+      if (historyResult.rows.length > 0) {
+        const historyMessages = historyResult.rows.map((msg: any) => {
+          const role = msg.type === 'USER' ? '用户' : 'AI助手';
+          return `${role}: ${msg.content}`;
+        }).join('\n\n');
+        conversationHistory = `\n\n=== 对话历史（请仔细阅读，不要重复提问已收集的信息） ===\n${historyMessages}\n=== 结束对话历史 ===\n\n`;
+        console.log('📚 Conversation history included:', {
+          messageCount: historyResult.rows.length,
+          historyLength: conversationHistory.length,
+          lastMessage: historyResult.rows[historyResult.rows.length - 1]?.content?.substring(0, 50)
+        });
+      } else {
+        console.log('⚠️ No conversation history found (this is the first message)');
+      }
+
+      // 构建上下文提示（用户项目数据：产品名称、目标人群等）
       let contextPrompt = '';
-      if (contextData) {
-        contextPrompt = `\n\n[[CURRENT PROJECT CONTEXT]]\n${JSON.stringify(contextData, null, 2)}\n[[END CONTEXT]]\n\n`;
+      if (contextData && Object.keys(contextData).length > 0) {
+        // 格式化上下文数据，使其更易读
+        let contextString = '\n\n=== 用户项目上下文（重要：请使用这些信息，不要重复提问） ===\n';
+        
+        // 提取关键信息（排除内部字段）
+        const contextKeys = Object.keys(contextData).filter(
+          k => !k.startsWith('_') && k !== 'documents'
+        );
+        
+        if (contextKeys.length > 0) {
+          contextString += '【用户已提供的信息】\n';
+          contextKeys.forEach(key => {
+            const value = contextData[key];
+            if (value !== null && value !== undefined && value !== '') {
+              const valueStr = Array.isArray(value) 
+                ? value.join('、') 
+                : String(value);
+              contextString += `- ${key}: ${valueStr}\n`;
+            }
+          });
+        }
+        
+        // 如果有成功案例，也包含
+        if (contextData._successful_examples_) {
+          contextString += '\n【成功案例参考】\n';
+          const examples = Array.isArray(contextData._successful_examples_) 
+            ? contextData._successful_examples_ 
+            : [contextData._successful_examples_];
+          examples.forEach((ex: string, i: number) => {
+            contextString += `案例 ${i + 1}: ${ex.substring(0, 200)}...\n`;
+          });
+        }
+        
+        contextString += '=== 结束用户项目上下文 ===\n\n';
+        contextString += '⚠️ 重要提示：以上是用户已经提供的项目信息。在信息收集过程中，如果用户已经提供了某个信息（如目标受众、产品名称等），请直接使用，不要重复提问！\n\n';
+        
+        contextPrompt = contextString;
+        
         console.log('📦 Context data included:', {
           hasContext: true,
-          contextKeys: Object.keys(contextData),
+          contextKeys: contextKeys,
           contextPromptLength: contextPrompt.length,
           hasSuccessfulExamples: !!contextData._successful_examples_
         });
@@ -204,7 +268,8 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
       }
 
       // 使用优先级 API 服务（优先 NewAPI，fallback 到 Gemini）
-      const fullPrompt = contextPrompt + content;
+      // 重要：将对话历史放在最前面，然后是项目上下文，最后是当前消息
+      const fullPrompt = conversationHistory + contextPrompt + content;
       console.log('🔄 Starting AI generation stream...', {
         promptLength: fullPrompt.length,
         contextPromptLength: contextPrompt.length,
