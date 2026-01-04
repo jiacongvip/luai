@@ -203,6 +203,23 @@ router.get('/agents', async (req, res) => {
   }
 });
 
+// 一键发布当前管理员创建的所有智能体（让前端用户端可见）
+router.post('/agents/publish-all', async (req: AuthRequest, res) => {
+  try {
+    const result = await query(
+      `UPDATE agents
+       SET is_public = true, updated_at = NOW()
+       WHERE created_by = $1`,
+      [req.userId]
+    );
+
+    res.json({ success: true, updated: result.rowCount || 0 });
+  } catch (error: any) {
+    console.error('Publish all agents error:', error);
+    res.status(500).json({ error: 'Failed to publish agents' });
+  }
+});
+
 // 系统设置
 router.get('/settings', async (req, res) => {
   try {

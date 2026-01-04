@@ -19,6 +19,7 @@ const KEYS = {
   SHOW_SIMULATOR: 'nexus_show_simulator_v1', 
   ENABLE_STYLE_PROMPT: 'nexus_enable_style_prompt_v1',
   SHOW_GOAL_LANDING: 'nexus_show_goal_landing_v1',
+  ENABLE_WEBSOCKET: 'nexus_enable_websocket_v1',
   TEMPLATES: 'nexus_templates_v1', // 暂时保留在本地
   ONBOARDING: 'nexus_onboarding_v1', // 暂时保留在本地
   SQUADS: 'nexus_squads_v1', // 暂时保留在本地
@@ -222,6 +223,12 @@ export const storage = {
   loadShowSimulator: (): boolean => {
       const data = localStorage.getItem(KEYS.SHOW_SIMULATOR);
       return data ? JSON.parse(data) : true; 
+  },
+
+  saveEnableWebSocket: (enabled: boolean) => localStorage.setItem(KEYS.ENABLE_WEBSOCKET, JSON.stringify(enabled)),
+  loadEnableWebSocket: (): boolean => {
+      const data = localStorage.getItem(KEYS.ENABLE_WEBSOCKET);
+      return data ? JSON.parse(data) : false; // 默认关闭
   },
 
   saveEnableStylePrompt: (show: boolean) => localStorage.setItem(KEYS.ENABLE_STYLE_PROMPT, JSON.stringify(show)),

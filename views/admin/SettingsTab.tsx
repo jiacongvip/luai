@@ -3,9 +3,10 @@ import React, { useState, useEffect } from 'react';
 import { Language, ModelConfig } from '../../types';
 import { translations } from '../../utils/translations';
 import { storage } from '../../utils/storage';
-import { Save, CheckCircle, Sliders, Brain, Lightbulb, MousePointerClick, Box, List, Trash2, CheckSquare, Plus, Tag, TrendingUp, Palette, LayoutTemplate, Target, Database, Copy, Server, Key, Globe, Play, Edit, X, AlertCircle, Loader2 } from 'lucide-react';
+import { Save, CheckCircle, Sliders, Brain, Lightbulb, MousePointerClick, Box, List, Trash2, CheckSquare, Plus, Tag, TrendingUp, Palette, LayoutTemplate, Target, Database, Copy, Server, Key, Globe, Play, Edit, X, AlertCircle, Loader2, Zap } from 'lucide-react';
 import { POSTGRES_SCHEMA } from '../../utils/postgresSchema'; // Import the schema
 import { api } from '../../utils/api';
+import { extractPreferences } from '../../utils/preferences';
 
 interface SettingsTabProps {
     language: Language;
@@ -31,20 +32,22 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ language, agentCategories, on
         maintenanceMode: false
     });
 
+    // ===== 从线上数据库（/api/preferences）加载，不再依赖 localStorage =====
     const [apiConfig, setApiConfig] = useState({
-        modelName: storage.loadModelName(),
-        allowModelSelect: storage.loadAllowModelSelect(),
-        availableModels: storage.loadAvailableModels()
+        modelName: 'gemini-3-flash-preview',
+        allowModelSelect: true,
+        availableModels: [] as ModelConfig[],
     });
 
-    const [showContextDrawer, setShowContextDrawer] = useState(storage.loadShowContextDrawer());
-    const [showThoughtChain, setShowThoughtChain] = useState(storage.loadShowThoughtChain());
-    const [showFollowUps, setShowFollowUps] = useState(storage.loadShowFollowUps());
-    const [showRichActions, setShowRichActions] = useState(storage.loadShowRichActions());
-    const [showTrendAnalysis, setShowTrendAnalysis] = useState(storage.loadShowTrendAnalysis());
-    const [showSimulator, setShowSimulator] = useState(storage.loadShowSimulator());
-    const [enableStylePrompt, setEnableStylePrompt] = useState(storage.loadEnableStylePrompt());
-    const [showGoalLanding, setShowGoalLanding] = useState(storage.loadShowGoalLanding());
+    const [showContextDrawer, setShowContextDrawer] = useState(true);
+    const [showThoughtChain, setShowThoughtChain] = useState(true);
+    const [showFollowUps, setShowFollowUps] = useState(true);
+    const [showRichActions, setShowRichActions] = useState(true);
+    const [showTrendAnalysis, setShowTrendAnalysis] = useState(true);
+    const [showSimulator, setShowSimulator] = useState(true);
+    const [enableStylePrompt, setEnableStylePrompt] = useState(true);
+    const [showGoalLanding, setShowGoalLanding] = useState(false);
+    const [enableWebSocket, setEnableWebSocket] = useState(false);
 
     const [newModelId, setNewModelId] = useState('');
     const [newModelName, setNewModelName] = useState('');
@@ -72,6 +75,68 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ language, agentCategories, on
     const [geminiApiKey, setGeminiApiKey] = useState('');
     const [geminiApiKeyHint, setGeminiApiKeyHint] = useState('');
     const [loadingGeminiKey, setLoadingGeminiKey] = useState(false);
+
+    // 进入设置页时拉取系统级设置（全局生效，所有用户共享）
+    useEffect(() => {
+        const loadSystemSettings = async () => {
+            try {
+                const settings = await api.systemSettings.get();
+
+                setApiConfig(prev => ({
+                    ...prev,
+                    modelName: settings.modelName || prev.modelName,
+                    allowModelSelect: settings.allowModelSelect ?? prev.allowModelSelect,
+                    availableModels: settings.availableModels?.length ? settings.availableModels : prev.availableModels,
+                }));
+
+                setShowContextDrawer(settings.showContextDrawer ?? true);
+                setShowThoughtChain(settings.showThoughtChain ?? true);
+                setShowFollowUps(settings.showFollowUps ?? true);
+                setShowRichActions(settings.showRichActions ?? true);
+                setShowTrendAnalysis(settings.showTrendAnalysis ?? true);
+                setShowSimulator(settings.showSimulator ?? true);
+                setEnableStylePrompt(settings.enableStylePrompt ?? true);
+                setShowGoalLanding(settings.showGoalLanding ?? false);
+                setEnableWebSocket(settings.enableWebSocket ?? false);
+            } catch (e) {
+                // 不要白屏：失败时保持默认值
+                console.error('Failed to load system settings:', e);
+            }
+        };
+        loadSystemSettings();
+    }, []);
+
+    const loadGeminiApiKey = async () => {
+        try {
+            setLoadingGeminiKey(true);
+            const settings = await api.admin.getSettings();
+            // 后端会返回脱敏后的 gemini_api_key（例如 "...abcd"）以及 gemini_api_key_has_value
+            const hint = settings?.gemini_api_key || '';
+            setGeminiApiKeyHint(hint);
+        } catch (error) {
+            console.error('Failed to load Gemini API key:', error);
+            // 不要让页面崩溃，保持为空即可
+            setGeminiApiKeyHint('');
+        } finally {
+            setLoadingGeminiKey(false);
+        }
+    };
+
+    const handleSaveGeminiApiKey = async () => {
+        if (!geminiApiKey.trim()) return;
+        try {
+            setLoadingGeminiKey(true);
+            await api.admin.updateSettings('gemini_api_key', geminiApiKey.trim(), 'Gemini API Key (fallback)');
+            setGeminiApiKey('');
+            await loadGeminiApiKey();
+            alert(language === 'zh' ? 'Gemini Key 已保存' : 'Gemini key saved');
+        } catch (error) {
+            console.error('Failed to save Gemini API key:', error);
+            alert(language === 'zh' ? '保存 Gemini Key 失败' : 'Failed to save Gemini key');
+        } finally {
+            setLoadingGeminiKey(false);
+        }
+    };
 
     // Handlers
     const handleAddModel = () => {
@@ -107,28 +172,39 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ language, agentCategories, on
         }
     };
 
-    const handleSaveSettings = () => {
-        storage.saveModelName(apiConfig.modelName);
-        storage.saveAllowModelSelect(apiConfig.allowModelSelect);
-        storage.saveAvailableModels(apiConfig.availableModels);
-        
-        storage.saveShowContextDrawer(showContextDrawer);
-        storage.saveShowThoughtChain(showThoughtChain);
-        storage.saveShowFollowUps(showFollowUps);
-        storage.saveShowRichActions(showRichActions);
-        storage.saveShowTrendAnalysis(showTrendAnalysis);
-        storage.saveShowSimulator(showSimulator); 
-        storage.saveEnableStylePrompt(enableStylePrompt);
-        storage.saveShowGoalLanding(showGoalLanding);
-        
-        if (onToggleTrendAnalysis) onToggleTrendAnalysis(showTrendAnalysis);
-        if (onToggleSimulator) onToggleSimulator(showSimulator); 
-        if (onToggleStylePrompt) onToggleStylePrompt(enableStylePrompt);
-        if (onToggleGoalLanding) onToggleGoalLanding(showGoalLanding);
-        
-        setShowSaveToast(true);
-        setTimeout(() => setShowSaveToast(false), 3000);
+    const handleSaveSettings = async () => {
+        try {
+            // 保存到系统级全局设置（所有用户共享）
+            await api.systemSettings.update({
+                modelName: apiConfig.modelName,
+                availableModels: apiConfig.availableModels,
+                allowModelSelect: apiConfig.allowModelSelect,
+                showContextDrawer,
+                showThoughtChain,
+                showFollowUps,
+                showRichActions,
+                showTrendAnalysis,
+                showSimulator,
+                enableStylePrompt,
+                showGoalLanding,
+                enableWebSocket,
+            });
+            
+            // 触发父组件的回调（更新 App.tsx 状态）
+            if (onToggleTrendAnalysis) onToggleTrendAnalysis(showTrendAnalysis);
+            if (onToggleSimulator) onToggleSimulator(showSimulator); 
+            if (onToggleStylePrompt) onToggleStylePrompt(enableStylePrompt);
+            if (onToggleGoalLanding) onToggleGoalLanding(showGoalLanding);
+            
+            setShowSaveToast(true);
+            setTimeout(() => setShowSaveToast(false), 3000);
+            console.log('✅ System settings saved (global for all users)');
+        } catch (error) {
+            console.error('Failed to save system settings:', error);
+            alert(language === 'zh' ? '保存失败，请重试' : 'Save failed, please retry');
+        }
     };
+    
 
     const handleResetDemo = () => {
         if (confirm('Are you sure? This will delete all local data (users, chat history, projects) and reload the page.')) {
@@ -417,7 +493,7 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ language, agentCategories, on
                              </div>
 
                              {/* Simulator Toggle */}
-                             <div className="flex items-center justify-between">
+                             <div className="flex items-center justify-between pb-4 border-b border-border">
                                   <div>
                                       <div className="font-bold text-textMain text-sm flex items-center gap-2">
                                           <LayoutTemplate size={14} className="text-red-500" />
@@ -430,6 +506,27 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ language, agentCategories, on
                                       className={`w-12 h-6 rounded-full p-1 transition-colors ${showSimulator ? 'bg-primary' : 'bg-border'}`}
                                   >
                                       <div className={`w-4 h-4 rounded-full bg-white transition-transform ${showSimulator ? 'translate-x-6' : ''}`}></div>
+                                  </button>
+                             </div>
+
+                             {/* WebSocket Toggle */}
+                             <div className="flex items-center justify-between">
+                                  <div>
+                                      <div className="font-bold text-textMain text-sm flex items-center gap-2">
+                                          <Zap size={14} className="text-yellow-500" />
+                                          {language === 'zh' ? 'WebSocket 模式' : 'WebSocket Mode'}
+                                      </div>
+                                      <div className="text-xs text-textSecondary">
+                                          {language === 'zh' 
+                                              ? '启用后聊天页面显示 WebSocket 切换按钮（类似 ChatGPT/Claude）' 
+                                              : 'Show WebSocket toggle button in chat (like ChatGPT/Claude)'}
+                                      </div>
+                                  </div>
+                                  <button 
+                                      onClick={() => setEnableWebSocket(!enableWebSocket)}
+                                      className={`w-12 h-6 rounded-full p-1 transition-colors ${enableWebSocket ? 'bg-primary' : 'bg-border'}`}
+                                  >
+                                      <div className={`w-4 h-4 rounded-full bg-white transition-transform ${enableWebSocket ? 'translate-x-6' : ''}`}></div>
                                   </button>
                              </div>
                         </div>

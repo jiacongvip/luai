@@ -103,6 +103,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       category,
       systemPrompt,
       styles,
+      isPublic,
     } = req.body;
 
     if (!name || !systemPrompt) {
@@ -110,6 +111,16 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
     }
 
     const agentId = `a${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+    // 默认可见性策略：
+    // - admin 创建：默认公开（除非显式传 isPublic=false）
+    // - 普通用户创建：默认私有（不允许创建公开智能体）
+    const userResult = await query('SELECT role FROM users WHERE id = $1', [req.userId]);
+    const userRole = userResult.rows[0]?.role || 'user';
+    const isPublicValue =
+      userRole === 'admin'
+        ? (typeof isPublic === 'boolean' ? isPublic : true)
+        : false;
 
     await query(
       `INSERT INTO agents (id, name, role, role_zh, description, description_zh, avatar,
@@ -127,7 +138,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
         category || 'General',
         systemPrompt,
         styles || [],
-        false, // 默认私有
+        isPublicValue,
         req.userId,
       ]
     );

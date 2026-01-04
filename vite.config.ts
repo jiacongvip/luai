@@ -8,9 +8,9 @@ export default defineConfig(({ mode }) => {
       server: {
         port: 4000,
         host: '0.0.0.0',
-        // 配置 history API fallback，让所有路由都返回 index.html
-        historyApiFallback: true,
       },
+      // Vite 默认支持 SPA fallback，无需额外配置
+      appType: 'spa',
       plugins: [react()],
       // 配置路由回退，让所有路径都返回 index.html（支持 SPA 路由）
       build: {

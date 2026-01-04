@@ -22,6 +22,7 @@ import { translations } from './utils/translations';
 import { storage } from './utils/storage';
 import { api } from './utils/api';
 import { handleError } from './utils/errorHandler';
+import { extractPreferences } from './utils/preferences';
 
 // Helper for unique IDs
 const generateId = () => `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
@@ -55,11 +56,8 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   
-  // Safe Language Initialization
-  const [language, setLanguage] = useState<Language>(() => {
-      const saved = storage.loadLang();
-      return (translations[saved]) ? saved : 'en';
-  });
+  // 语言/主题等从数据库 preferences 同步（不再从 localStorage 初始化）
+  const [language, setLanguage] = useState<Language>('zh');
 
   // Load Agents from storage or fallback to MOCK
   const [agents, setAgents] = useState<Agent[]>(MOCK_AGENTS);
@@ -76,12 +74,15 @@ const App: React.FC = () => {
       { id: '5', key: 'documents', label: '产品文档/手册 (Product Documents)', type: 'file', required: false, placeholder: 'Upload PDF, DOCX, TXT...' }
   ]);
 
-  const [currentTheme, setCurrentTheme] = useState<ThemeId>(() => storage.loadTheme() || 'blue');
-  const [themeMode, setThemeMode] = useState<ThemeMode>(() => storage.loadMode() || 'dark');
-  const [showTrendAnalysis, setShowTrendAnalysis] = useState(() => storage.loadShowTrendAnalysis());
-  const [showSimulator, setShowSimulator] = useState(() => storage.loadShowSimulator()); 
-  const [enableStylePrompt, setEnableStylePrompt] = useState(() => storage.loadEnableStylePrompt()); 
-  const [showGoalLanding, setShowGoalLanding] = useState(() => storage.loadShowGoalLanding()); // NEW
+  const [currentTheme, setCurrentTheme] = useState<ThemeId>('blue');
+  const [themeMode, setThemeMode] = useState<ThemeMode>('dark');
+  const [showTrendAnalysis, setShowTrendAnalysis] = useState(true);
+  const [showSimulator, setShowSimulator] = useState(true); 
+  const [enableStylePrompt, setEnableStylePrompt] = useState(true); 
+  const [showGoalLanding, setShowGoalLanding] = useState(false);
+  
+  // 系统级设置加载状态
+  const [systemSettingsLoaded, setSystemSettingsLoaded] = useState(false);
   
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   
@@ -92,6 +93,29 @@ const App: React.FC = () => {
   const [isGroupModalOpen, setIsGroupModalOpen] = useState(false);
   const [squads, setSquads] = useState<AgentSquad[]>(() => storage.loadSquads() || []);
   const [userAvailableSquads, setUserAvailableSquads] = useState<AgentSquad[]>([]);
+
+  // ===== 加载系统级全局设置（所有用户共享）=====
+  useEffect(() => {
+    const loadSystemSettings = async () => {
+      try {
+        const settings = await api.systemSettings.get();
+        console.log('📋 Loaded system settings:', settings);
+        
+        // 应用系统设置到 App 状态
+        setShowTrendAnalysis(settings.showTrendAnalysis ?? true);
+        setShowSimulator(settings.showSimulator ?? true);
+        setEnableStylePrompt(settings.enableStylePrompt ?? true);
+        setShowGoalLanding(settings.showGoalLanding ?? false);
+        
+        setSystemSettingsLoaded(true);
+      } catch (error) {
+        console.error('Failed to load system settings:', error);
+        // 使用默认值，不阻塞应用
+        setSystemSettingsLoaded(true);
+      }
+    };
+    loadSystemSettings();
+  }, []);
 
   // 初始化数据加载（异步）- 检查登录状态
   useEffect(() => {
@@ -384,6 +408,30 @@ const App: React.FC = () => {
           }
       }
   }, [isAdminPath]);
+
+  // 从数据库 preferences 同步前台/后台设置（避免前台仍读 localStorage）
+  useEffect(() => {
+    const syncPreferences = async () => {
+      if (!currentUser) return;
+      try {
+        const { preferences } = await api.preferences.get();
+        const prefs = extractPreferences(preferences);
+        setLanguage(prefs.language);
+        setCurrentTheme(prefs.theme);
+        setThemeMode(prefs.mode);
+        setShowTrendAnalysis(prefs.showTrendAnalysis);
+        setShowSimulator(prefs.showSimulator);
+        setEnableStylePrompt(prefs.enableStylePrompt);
+        setShowGoalLanding(prefs.showGoalLanding);
+
+        // 把最新 preferences 放回 currentUser，供子组件需要时使用
+        setCurrentUser((prev: any) => prev ? ({ ...prev, preferences }) : prev);
+      } catch (e) {
+        console.error('Failed to sync preferences:', e);
+      }
+    };
+    syncPreferences();
+  }, [currentUser?.id]);
 
   // --- Handlers ---
 
@@ -955,6 +1003,8 @@ const App: React.FC = () => {
   };
 
   // 管理后台路由处理
+  console.log('🔍 Route Debug:', { isAdminPath, adminRoute, currentUser: !!currentUser, isLoading, pathname: window.location.pathname });
+  
   if (isAdminPath) {
       // 管理后台登录页面（优先检查，即使正在加载也显示登录页）
       if (adminRoute === AdminRoute.LOGIN || !currentUser) {
@@ -999,6 +1049,7 @@ const App: React.FC = () => {
               currentPath={window.location.pathname}
               onNavigate={handleAdminNavigate}
               onLogout={handleAdminLogout}
+              onLanguageChange={setLanguage}
               activeTab={adminActiveTab}
               onTabChange={setAdminActiveTab}
           >
@@ -1171,12 +1222,12 @@ const App: React.FC = () => {
             onToggleTrendAnalysis={setShowTrendAnalysis}
             onToggleSimulator={setShowSimulator} 
             onToggleStylePrompt={setEnableStylePrompt} 
-            onToggleGoalLanding={setShowGoalLanding} // NEW
-            agents={agents} // Pass Global Agents
-            onUpdateAgents={setAgents} // Allow Admin to update
+            onToggleGoalLanding={setShowGoalLanding}
+            agents={agents}
+            onUpdateAgents={setAgents}
         />;
       case AppRoute.STUDIO:
-        return <OrchestrationStudio language={language} onDeploy={handleDeployWorkflow} onBack={() => setCurrentRoute(AppRoute.ADMIN)} />;
+        return <OrchestrationStudio language={language} onDeploy={handleDeployWorkflow} onBack={() => setCurrentRoute(AppRoute.ADMIN)} agents={agents} />;
       default:
         return null;
     }

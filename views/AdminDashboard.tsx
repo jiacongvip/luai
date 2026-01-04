@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { User, Agent, Language, Workflow, WorkflowNode, FormField, FormFieldType, PromptTemplate, AgentSquad, ModelConfig } from '../types';
 import { translations } from '../utils/translations';
 import { MOCK_ALL_USERS } from '../constants';
-import { Search, Shield, Users, Bot, Settings, Plus, Edit, Trash2, FileText, Upload, X, Workflow as WorkflowIcon, ClipboardList, GripVertical, Database, Layout, PenTool, Mail, BarChart, Cpu, CheckCircle, UserPlus, CheckSquare, Lightbulb, Zap, TrendingUp, DollarSign, MessageSquare, Activity, AlertCircle, Loader2, Eye, Clock, ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { Search, Shield, Users, Bot, Settings, Plus, Edit, Trash2, FileText, Upload, X, Workflow as WorkflowIcon, ClipboardList, GripVertical, Database, Layout, PenTool, Mail, BarChart, Cpu, CheckCircle, UserPlus, CheckSquare, Lightbulb, Zap, TrendingUp, DollarSign, MessageSquare, Activity, AlertCircle, Loader2, Eye, Clock, ArrowUpRight, ArrowDownRight, Globe } from 'lucide-react';
 import OrchestrationStudio from './OrchestrationStudio';
 import { storage } from '../utils/storage';
 import AgentEditModal from '../components/modals/AgentEditModal';
@@ -25,7 +25,7 @@ interface AdminDashboardProps {
   onToggleGoalLanding?: (enabled: boolean) => void; 
   agents: Agent[]; 
   onUpdateAgents: (agents: Agent[]) => void;
-  activeTab: 'analytics' | 'users' | 'agents' | 'squads' | 'settings' | 'workflows' | 'onboarding' | 'templates' | 'knowledge' | 'audit';
+  activeTab?: 'analytics' | 'users' | 'agents' | 'squads' | 'settings' | 'workflows' | 'onboarding' | 'templates' | 'knowledge' | 'audit';
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
@@ -40,8 +40,10 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   onToggleGoalLanding,
   agents, 
   onUpdateAgents,
-  activeTab
+  activeTab: propActiveTab
 }) => {
+  // activeTab 由外层 AdminLayout/App.tsx 驱动，这里不要再维护一份本地 state，否则切换菜单右侧内容不会更新
+  const activeTab: NonNullable<AdminDashboardProps['activeTab']> = propActiveTab || 'analytics';
   const tAdmin = translations[language]?.admin || translations['en'].admin;
   const tCommon = translations[language]?.common || translations['en'].common;
   const tMarketplace = translations[language]?.marketplace || translations['en'].marketplace;
@@ -49,9 +51,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const t = tAdmin;
 
   // --- Data State ---
-  const [squads, setSquads] = useState<AgentSquad[]>(() => storage.loadSquads() || []);
+  const [squads, setSquads] = useState<AgentSquad[]>([]);
   
-  // PRE-CONFIGURED WORKFLOW TEMPLATE FOR USER REQUEST
+  // 用户列表从 API 加载
+  const [users, setUsers] = useState<User[]>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+  
+  // Workflows 示例数据
   const [workflows, setWorkflows] = useState<Workflow[]>([
       { 
           id: 'wf-smart-copy', 
@@ -74,10 +80,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       },
       { id: 'wf-1', name: 'Customer Support Triaging', description: 'Classify tickets and route to agents.', nodes: [], edges: [], status: 'published', updatedAt: Date.now(), createdBy: 'Admin' }
   ]);
-  
-  const [users, setUsers] = useState<User[]>(MOCK_ALL_USERS);
+
   // Agents state removed here, using prop 'agents' instead
-  
+
   // Agent Categories State
   const [agentCategories, setAgentCategories] = useState<string[]>(() => storage.loadAgentCategories());
 
@@ -107,13 +112,41 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const [analyticsData, setAnalyticsData] = useState<any>(null);
   const [auditLogs, setAuditLogs] = useState<any[]>([]);
   const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState<string | null>(null);
   const [auditPage, setAuditPage] = useState(1);
   const [auditTotal, setAuditTotal] = useState(0);
 
   // Persistence
+  // 加载初始数据
   useEffect(() => {
-      storage.saveSquads(squads);
-  }, [squads]);
+    const loadInitialData = async () => {
+      try {
+        // 并行加载用户和Squads
+        const [usersResult, squadsResult] = await Promise.all([
+          api.admin.getUsers(),
+          api.squads.getAll()
+        ]);
+        
+        setUsers(usersResult?.users || []);
+        setSquads(squadsResult || []);
+        setUsersLoading(false);
+      } catch (error: any) {
+        console.error('Failed to load initial data:', error);
+        handleError(error, {
+          action: 'load initial data',
+          component: 'AdminDashboard',
+        });
+        setUsersLoading(false);
+      }
+    };
+    
+    loadInitialData();
+  }, []);
+
+  // 保存 Squads 到数据库（已迁移，不再使用localStorage）
+  // useEffect(() => {
+  //     storage.saveSquads(squads);
+  // }, [squads]);
 
   // Load analytics data when tab is active
   useEffect(() => {
@@ -152,11 +185,13 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
   const loadAuditLogs = async () => {
     try {
       setAuditLoading(true);
+      setAuditError(null);
       const data = await api.analytics.getAdminAuditLogs({ page: auditPage, limit: 20 });
       setAuditLogs(data.logs || []);
       setAuditTotal(data.pagination?.total || 0);
     } catch (error) {
       console.error('Failed to load audit logs:', error);
+      setAuditError((error as any)?.message || 'Failed to load audit logs');
       setAuditLogs([]);
     } finally {
       setAuditLoading(false);
@@ -573,7 +608,26 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
 
   const renderAgentList = () => (
     <div className="space-y-4">
-      <div className="flex justify-end">
+      <div className="flex justify-end gap-2">
+        <button
+          onClick={async () => {
+            try {
+              const result = await api.admin.publishAllAgents();
+              // 发布后刷新（管理员接口包含私有/全部）
+              const refreshed = await api.admin.getAllAgents();
+              onUpdateAgents(refreshed || []);
+              alert(language === 'zh'
+                ? `已发布 ${result.updated} 个智能体到用户端`
+                : `Published ${result.updated} agents to user side`);
+            } catch (error: any) {
+              handleError(error, { action: 'publish all agents', component: 'AdminDashboard' });
+            }
+          }}
+          className="flex items-center gap-2 bg-accent text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-accent/20 hover:brightness-110"
+          title={language === 'zh' ? '将你创建的所有智能体设为公开，用户端即可看到' : 'Make all your agents public so users can see them'}
+        >
+          <Globe size={16} /> {language === 'zh' ? '发布到前端' : 'Publish'}
+        </button>
         <button onClick={createNewAgent} className="flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-primary/20 hover:brightness-110">
           <Plus size={16} /> {tMarketplace.createCustom}
         </button>
@@ -717,7 +771,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     language={language} 
                     onBack={() => setIsEditingWorkflow(false)} 
                     onDeploy={handleWorkflowDeploy} 
-                    existingNodes={currentWorkflowNodes} // PASS EXISTING NODES FOR EDITING
+                    existingNodes={currentWorkflowNodes}
+                    agents={agents}
                  />;
       }
 
@@ -1083,8 +1138,9 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       </div>
   );
 
+  // 注意：AdminLayout 已在 App.tsx 外层渲染，这里不要再嵌套一次，否则会出现两排菜单
   return (
-    <div className="flex flex-col md:flex-row h-full bg-background overflow-hidden">
+    <div className="h-full overflow-y-auto p-8">
       {assigningSquad && <AssignSquadModal />}
       {editingUser && (
           <UserEditModal 
@@ -1108,54 +1164,28 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       
       {editingTemplate && <TemplateEditModal />}
       {editingSquad && <SquadEditModal />}
-
-      <div className="flex-1 flex flex-col w-full h-full overflow-hidden">
-        {/* Header */}
-        <div className="flex-shrink-0 px-4 py-3 border-b border-border bg-background">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl md:text-3xl font-bold text-textMain flex items-center gap-3 mb-1">
-                <Shield className="text-primary" size={28} />
-                {t.title}
-              </h1>
-              <p className="text-sm text-textSecondary">
-                {language === 'zh' ? '系统管理控制台' : 'System Management Console'}
-              </p>
-            </div>
-            {/* System Status */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/10 border border-green-500/20 text-sm text-green-500">
-              <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-              <span>{language === 'zh' ? '系统运行正常' : 'System Operational'}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Content Area - Full Screen */}
-        <div className="flex-1 overflow-y-auto scrollbar-hide bg-background w-full">
-          <div className="p-4 w-full h-full">
-            {activeTab === 'analytics' && renderAnalytics()}
-            {activeTab === 'users' && renderUserTable()}
-            {activeTab === 'agents' && renderAgentList()}
-            {activeTab === 'squads' && renderSquads()}
-            {activeTab === 'knowledge' && renderKnowledgeBase()}
-            {activeTab === 'templates' && renderTemplates()}
-            {activeTab === 'settings' && (
-              <SettingsTab 
-                language={language} 
-                agentCategories={agentCategories}
-                onUpdateCategories={handleUpdateCategories}
-                onToggleTrendAnalysis={onToggleTrendAnalysis}
-                onToggleStylePrompt={onToggleStylePrompt}
-                onToggleSimulator={onToggleSimulator}
-                onToggleGoalLanding={onToggleGoalLanding}
-              />
-            )}
-            {activeTab === 'workflows' && renderWorkflows()}
-            {activeTab === 'onboarding' && renderOnboardingConfig()}
-            {activeTab === 'audit' && renderAuditLogs()}
-          </div>
-        </div>
-      </div>
+      
+      {/* Tab Content */}
+      {activeTab === 'analytics' && renderAnalytics()}
+      {activeTab === 'users' && renderUserTable()}
+      {activeTab === 'agents' && renderAgentList()}
+      {activeTab === 'squads' && renderSquads()}
+      {activeTab === 'workflows' && renderWorkflows()}
+      {activeTab === 'templates' && renderTemplates()}
+      {activeTab === 'knowledge' && renderKnowledgeBase()}
+      {activeTab === 'onboarding' && renderOnboardingConfig()}
+      {activeTab === 'audit' && renderAuditLogs()}
+      {activeTab === 'settings' && (
+        <SettingsTab 
+          language={language} 
+          agentCategories={agentCategories}
+          onUpdateCategories={handleUpdateCategories}
+          onToggleTrendAnalysis={onToggleTrendAnalysis}
+          onToggleStylePrompt={onToggleStylePrompt}
+          onToggleSimulator={onToggleSimulator}
+          onToggleGoalLanding={onToggleGoalLanding}
+        />
+      )}
     </div>
   );
 
@@ -1383,6 +1413,22 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
         </div>
 
         <div className="bg-surface border border-border rounded-xl overflow-hidden">
+          {auditError && !auditLoading && (
+            <div className="px-4 py-3 border-b border-border bg-red-500/10 text-red-400 text-sm flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="w-4 h-4" />
+                <span className="break-all">
+                  {language === 'zh' ? `加载失败：${auditError}` : `Load failed: ${auditError}`}
+                </span>
+              </div>
+              <button
+                onClick={loadAuditLogs}
+                className="px-3 py-1.5 bg-red-500/10 text-red-300 rounded-lg text-sm hover:bg-red-500/20 transition-colors"
+              >
+                {language === 'zh' ? '重试' : 'Retry'}
+              </button>
+            </div>
+          )}
           {auditLoading ? (
             <div className="flex items-center justify-center h-48">
               <Loader2 className="w-6 h-6 animate-spin text-primary" />
@@ -1403,7 +1449,15 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                 {auditLogs.map((log: any) => (
                   <tr key={log.id} className="hover:bg-background/50 transition-colors">
                     <td className="px-4 py-3 text-textSecondary text-xs">
-                      {new Date(log.createdAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')}
+                      {(() => {
+                        try {
+                          return log?.createdAt
+                            ? new Date(log.createdAt).toLocaleString(language === 'zh' ? 'zh-CN' : 'en-US')
+                            : '-';
+                        } catch {
+                          return '-';
+                        }
+                      })()}
                     </td>
                     <td className="px-4 py-3">
                       <div>
@@ -1423,7 +1477,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                     </td>
                     <td className="px-4 py-3 text-textMain">
                       {log.resource}
-                      {log.resourceId && <span className="text-textSecondary ml-1">#{log.resourceId.slice(0, 8)}</span>}
+                      {log.resourceId !== null && log.resourceId !== undefined && (
+                        <span className="text-textSecondary ml-1">
+                          #{String(log.resourceId).slice(0, 8)}
+                        </span>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-textSecondary text-xs font-mono">
                       {log.ip || '-'}

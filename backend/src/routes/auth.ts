@@ -27,11 +27,31 @@ router.post('/register', async (req, res) => {
     // 生成用户 ID
     const userId = `u${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
+    // 默认偏好设置
+    const defaultPreferences = {
+      theme: 'blue',
+      mode: 'dark',
+      language: 'zh',
+      modelName: 'gemini-3-flash-preview',
+      featureFlags: {
+        showContextDrawer: true,
+        showThoughtChain: true,
+        showFollowUps: true,
+        showRichActions: true,
+        showTrendAnalysis: true,
+        showSimulator: true,
+        enableStylePrompt: true,
+        showGoalLanding: false,
+        enableWebSocket: false,
+        allowModelSelect: true,
+      },
+    };
+
     // 创建用户
     await query(
-      `INSERT INTO users (id, email, name, password_hash, credits, role, status, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())`,
-      [userId, email, name, passwordHash, 500.0, 'user', 'active']
+      `INSERT INTO users (id, email, name, password_hash, credits, role, status, preferences, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())`,
+      [userId, email, name, passwordHash, 500.0, 'user', 'active', JSON.stringify(defaultPreferences)]
     );
 
     // 生成 JWT
@@ -50,6 +70,7 @@ router.post('/register', async (req, res) => {
         credits: 500.0,
         role: 'user',
         status: 'active',
+        preferences: defaultPreferences,
       },
     });
   } catch (error: any) {
@@ -61,7 +82,7 @@ router.post('/register', async (req, res) => {
 // 登录
 router.post('/login', async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password, localPreferences } = req.body; // 接收前端的localStorage设置
 
     if (!email || !password) {
       return res.status(400).json({ error: 'Email and password are required' });
@@ -69,7 +90,7 @@ router.post('/login', async (req, res) => {
 
     // 查找用户
     const result = await query(
-      'SELECT id, email, name, password_hash, credits, role, status FROM users WHERE email = $1',
+      'SELECT id, email, name, password_hash, credits, role, status, preferences FROM users WHERE email = $1',
       [email]
     );
 
@@ -95,6 +116,20 @@ router.post('/login', async (req, res) => {
       { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
     );
 
+    // 迁移localStorage设置到数据库（如果提供且数据库中没有）
+    let preferences = user.preferences || {};
+    if (localPreferences && Object.keys(localPreferences).length > 0) {
+      try {
+        const { migrateUserPreferences } = await import('../services/preferencesMigration.js');
+        const migrationResult = await migrateUserPreferences(user.id, localPreferences);
+        if (migrationResult.success) {
+          preferences = migrationResult.preferences;
+        }
+      } catch (migrationError) {
+        console.error('Preference migration error:', migrationError);
+      }
+    }
+
     res.json({
       token,
       user: {
@@ -104,6 +139,7 @@ router.post('/login', async (req, res) => {
         credits: parseFloat(user.credits),
         role: user.role,
         status: user.status,
+        preferences, // 返回偏好设置
       },
     });
   } catch (error: any) {

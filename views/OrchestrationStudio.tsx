@@ -16,6 +16,7 @@ interface OrchestrationStudioProps {
   onBack: () => void;
   onDeploy: (nodes: WorkflowNode[]) => void;
   existingNodes?: WorkflowNode[];
+  agents?: Agent[];
 }
 
 // Helper for Bezier Curve
@@ -26,10 +27,13 @@ const getEdgePath = (sourceX: number, sourceY: number, targetX: number, targetY:
     return `M${sourceX},${sourceY} C${sourceX + controlPointX},${sourceY} ${targetX - controlPointX},${targetY} ${targetX},${targetY}`;
 };
 
-const OrchestrationStudio: React.FC<OrchestrationStudioProps> = ({ language, onBack, onDeploy, existingNodes }) => {
+const OrchestrationStudio: React.FC<OrchestrationStudioProps> = ({ language, onBack, onDeploy, existingNodes, agents: propAgents }) => {
   // Use casting to bypass TS strict property check if studio is missing from one translation variant locally but exists at runtime
   const t = (translations[language] as any)?.studio || (translations['en'] as any).studio;
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  // 使用传入的agents或MOCK_AGENTS作为后备
+  const agents = propAgents || MOCK_AGENTS;
 
   // --- State ---
   const [nodes, setNodes] = useState<WorkflowNode[]>(existingNodes || [
@@ -172,7 +176,7 @@ const OrchestrationStudio: React.FC<OrchestrationStudioProps> = ({ language, onB
                   // If it's an agent node, try to use agent specific prompt
                   let finalPrompt = prompt;
                   if (currentNode.type === 'agent' && currentNode.data.agentId) {
-                      const agent = MOCK_AGENTS.find(a => a.id === currentNode.data.agentId);
+                      const agent = agents.find(a => a.id === currentNode.data.agentId);
                       if (agent) finalPrompt = agent.systemPrompt;
                   }
                   
@@ -701,7 +705,7 @@ const OrchestrationStudio: React.FC<OrchestrationStudioProps> = ({ language, onB
                       let resolvedAgentName = '';
                       let resolvedAgentAvatar = '';
                       if (node.type === 'agent' && node.data.agentId) {
-                          const agent = MOCK_AGENTS.find(a => a.id === node.data.agentId);
+                          const agent = agents.find(a => a.id === node.data.agentId);
                           if (agent) {
                               resolvedAgentName = agent.name;
                               resolvedAgentAvatar = agent.avatar;
@@ -1002,13 +1006,13 @@ const OrchestrationStudio: React.FC<OrchestrationStudioProps> = ({ language, onB
                                     <select 
                                         value={selectedNode.data.agentId || ''}
                                         onChange={(e) => {
-                                            const agent = MOCK_AGENTS.find(a => a.id === e.target.value);
+                                            const agent = agents.find(a => a.id === e.target.value);
                                             setNodes(nodes.map(n => n.id === selectedNode.id ? { ...n, data: { ...n.data, agentId: e.target.value, label: agent ? agent.name : n.data.label } } : n));
                                         }}
                                         className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm text-textMain focus:border-primary outline-none"
                                     >
                                         <option value="" disabled>-- Choose an Agent --</option>
-                                        {MOCK_AGENTS.filter(a => a.id !== 'a1').map(agent => (
+                                        {agents.filter(a => a.id !== 'a1').map(agent => (
                                             <option key={agent.id} value={agent.id}>
                                                 {agent.name} ({agent.category})
                                             </option>

@@ -61,7 +61,8 @@ async function apiRequest<T>(
       // Token 过期，清除并跳转到登录
       clearAuthToken();
       window.location.href = '/login';
-      const error = new Error('Unauthorized');
+      const error: any = new Error('Unauthorized');
+      error.status = 401;
       if (loggerInstance) {
         loggerInstance.logError(undefined, 'Unauthorized API request', { method, url, status: 401 });
       }
@@ -73,7 +74,10 @@ async function apiRequest<T>(
       loggerInstance.logAPI(method, url, response.status, errorMessage);
       loggerInstance.logError(undefined, `API Error: ${errorMessage}`, { method, url, status: response.status, error });
     }
-    throw new Error(errorMessage);
+    const err: any = new Error(errorMessage);
+    err.status = response.status;
+    err.data = error;
+    throw err;
   }
 
   // 记录成功的API调用
@@ -89,9 +93,27 @@ export const api = {
   // 认证
   auth: {
     login: async (email: string, password: string) => {
+      // 收集localStorage设置用于迁移到数据库
+      const localPreferences = {
+        theme: localStorage.getItem('nexus_theme_v1'),
+        mode: localStorage.getItem('nexus_mode_v1'),
+        language: localStorage.getItem('nexus_lang_v1'),
+        modelName: localStorage.getItem('nexus_model_name_v1'),
+        showContextDrawer: localStorage.getItem('nexus_show_context_drawer_v1') === 'true',
+        showThoughtChain: localStorage.getItem('nexus_show_thought_chain_v1') !== 'false',
+        showFollowUps: localStorage.getItem('nexus_show_follow_ups_v1') !== 'false',
+        showRichActions: localStorage.getItem('nexus_show_rich_actions_v1') !== 'false',
+        showTrendAnalysis: localStorage.getItem('nexus_show_trend_analysis_v1') !== 'false',
+        showSimulator: localStorage.getItem('nexus_show_simulator_v1') !== 'false',
+        enableStylePrompt: localStorage.getItem('nexus_enable_style_prompt_v1') !== 'false',
+        showGoalLanding: localStorage.getItem('nexus_show_goal_landing_v1') === 'true',
+        enableWebSocket: localStorage.getItem('nexus_enable_websocket_v1') === 'true',
+        allowModelSelect: localStorage.getItem('nexus_allow_model_select_v1') !== 'false',
+      };
+      
       const data = await apiRequest<{ token: string; user: any }>('/auth/login', {
         method: 'POST',
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ email, password, localPreferences }),
       });
       if (data.token) {
         setAuthToken(data.token);
@@ -255,6 +277,12 @@ export const api = {
     
     // 智能体管理（包括私有）
     getAllAgents: () => apiRequest<any[]>('/admin/agents'),
+
+    // 一键发布当前管理员创建的所有智能体（让用户端可见）
+    publishAllAgents: () =>
+      apiRequest<{ success: boolean; updated: number }>('/admin/agents/publish-all', {
+        method: 'POST',
+      }),
     
     // 系统设置
     getSettings: () => apiRequest<any>('/admin/settings'),
@@ -558,6 +586,76 @@ export const api = {
         summary?: { total: number; passed: number; failed: number };
         status?: number;
       }>(`/admin/api-configs/${id}/test`, {
+        method: 'POST',
+      }),
+  },
+
+  // 用户偏好设置
+  preferences: {
+    // 获取所有偏好设置
+    get: () =>
+      apiRequest<{ preferences: any }>('/preferences'),
+    
+    // 更新偏好设置（部分更新）
+    update: (preferences: {
+      theme?: string;
+      mode?: string;
+      language?: string;
+      modelName?: string;
+      featureFlags?: Record<string, boolean>;
+      [key: string]: any;
+    }) =>
+      apiRequest<{ success: boolean; preferences: any }>('/preferences', {
+        method: 'PATCH',
+        body: JSON.stringify(preferences),
+      }),
+    
+    // 重置为默认值
+    reset: () =>
+      apiRequest<{ success: boolean; preferences: any }>('/preferences/reset', {
+        method: 'POST',
+      }),
+    
+    // 更新单个功能开关
+    updateFeature: (feature: string, enabled: boolean) =>
+      apiRequest<{ success: boolean; preferences: any }>(`/preferences/feature/${feature}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ enabled }),
+      }),
+  },
+
+  // ============================================
+  // 系统级全局设置（所有用户共享）
+  // ============================================
+  systemSettings: {
+    // 获取系统设置（公开接口）
+    get: () => apiRequest<any>('/system-settings'),
+    
+    // 更新系统设置（需要管理员权限）
+    update: (settings: {
+      showTrendAnalysis?: boolean;
+      showSimulator?: boolean;
+      enableStylePrompt?: boolean;
+      showGoalLanding?: boolean;
+      enableWebSocket?: boolean;
+      showContextDrawer?: boolean;
+      showThoughtChain?: boolean;
+      showFollowUps?: boolean;
+      showRichActions?: boolean;
+      allowModelSelect?: boolean;
+      modelName?: string;
+      availableModels?: { id: string; name: string }[];
+      agentCategories?: string[];
+      [key: string]: any;
+    }) =>
+      apiRequest<{ success: boolean; settings: any }>('/system-settings', {
+        method: 'PATCH',
+        body: JSON.stringify(settings),
+      }),
+    
+    // 重置为默认值
+    reset: () =>
+      apiRequest<{ success: boolean; settings: any }>('/system-settings/reset', {
         method: 'POST',
       }),
   },

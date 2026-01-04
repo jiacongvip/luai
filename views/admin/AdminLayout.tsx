@@ -1,8 +1,9 @@
 import React, { useState } from 'react';
-import { Shield, Menu, LogOut, Home, Users, Bot, Settings, Workflow as WorkflowIcon, ClipboardList, Lightbulb, Database, BarChart2, FileText } from 'lucide-react';
+import { Shield, Menu, LogOut, Home, Users, Bot, Settings, Workflow as WorkflowIcon, ClipboardList, Lightbulb, Database, BarChart2, FileText, Globe } from 'lucide-react';
 import { Language, User as UserType } from '../../types';
 import { translations } from '../../utils/translations';
 import { clearAuthToken } from '../../utils/api';
+import { storage } from '../../utils/storage';
 
 type AdminTab = 'analytics' | 'users' | 'agents' | 'squads' | 'settings' | 'workflows' | 'onboarding' | 'templates' | 'knowledge' | 'audit';
 
@@ -15,6 +16,7 @@ interface AdminLayoutProps {
   onLogout?: () => void;
   activeTab?: AdminTab;
   onTabChange?: (tab: AdminTab) => void;
+  onLanguageChange?: (lang: Language) => void;
 }
 
 const AdminLayout: React.FC<AdminLayoutProps> = ({ 
@@ -25,7 +27,8 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
   onNavigate,
   onLogout,
   activeTab = 'analytics',
-  onTabChange
+  onTabChange,
+  onLanguageChange
 }) => {
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const t = translations[language]?.admin || translations['en'].admin;
@@ -105,6 +108,46 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
 
           {/* Footer */}
           <div className="p-4 border-t border-border space-y-3">
+            {/* 语言切换 */}
+            <div className="flex items-center justify-between px-4 py-2 bg-background/50 rounded-lg">
+              <div className="flex items-center gap-2 text-textSecondary">
+                <Globe size={16} />
+                <span className="text-xs font-medium">{language === 'zh' ? '语言' : 'Language'}</span>
+              </div>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => {
+                    if (onLanguageChange) {
+                      onLanguageChange('zh');
+                      storage.saveLang('zh');
+                    }
+                  }}
+                  className={`px-2 py-1 text-xs font-bold rounded transition-all ${
+                    language === 'zh' 
+                      ? 'bg-primary text-white' 
+                      : 'text-textSecondary hover:text-textMain hover:bg-surface'
+                  }`}
+                >
+                  中文
+                </button>
+                <button
+                  onClick={() => {
+                    if (onLanguageChange) {
+                      onLanguageChange('en');
+                      storage.saveLang('en');
+                    }
+                  }}
+                  className={`px-2 py-1 text-xs font-bold rounded transition-all ${
+                    language === 'en' 
+                      ? 'bg-primary text-white' 
+                      : 'text-textSecondary hover:text-textMain hover:bg-surface'
+                  }`}
+                >
+                  EN
+                </button>
+              </div>
+            </div>
+
             <a
               href="/"
               className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg text-textSecondary hover:bg-background hover:text-textMain transition-all text-sm"

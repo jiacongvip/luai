@@ -10,6 +10,7 @@ import { generateAgentResponse, classifyMessageIntent, generateFollowUpQuestions
 import { translations } from '../utils/translations';
 import { storage } from '../utils/storage';
 import { api } from '../utils/api';
+import { extractPreferences } from '../utils/preferences';
 import { retryWithBackoff, shouldRetry } from '../utils/retry';
 import { handleError, parseSSEChunk } from '../utils/errorHandler';
 import { logger } from '../utils/logger';
@@ -79,6 +80,7 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
   const [processingStatus, setProcessingStatus] = useState<string | null>(null);
   const [showAgentSelector, setShowAgentSelector] = useState(false);
   const [useWebSocket, setUseWebSocket] = useState(false); // 是否使用WebSocket（类似大公司）
+  const [enableWebSocketButton, setEnableWebSocketButton] = useState(false); // 是否显示WebSocket按钮（来自数据库）
   
   // Model Selection State
   const [allowModelSelect, setAllowModelSelect] = useState(false);
@@ -123,23 +125,28 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
 
   const activeProject = user.projects?.find(p => p.id === user.activeProjectId);
 
-  // Load Config on Mount
-  const loadConfig = () => {
-      setAllowModelSelect(storage.loadAllowModelSelect());
-      setAvailableModels(storage.loadAvailableModels());
-      setShowContextDrawerFeature(storage.loadShowContextDrawer());
-      setShowThoughtChainFeature(storage.loadShowThoughtChain());
-      setShowFollowUps(storage.loadShowFollowUps());
-      setShowRichActions(storage.loadShowRichActions());
-      
-      const defaultName = storage.loadModelName();
-      if (!selectedModel) setSelectedModel(defaultName || 'gemini-3-flash-preview');
+  // Load Config from System Settings（系统级全局设置）
+  const loadConfig = async () => {
+      try {
+          const settings = await api.systemSettings.get();
+
+          setAllowModelSelect(settings.allowModelSelect ?? true);
+          setAvailableModels(settings.availableModels || []);
+          setShowContextDrawerFeature(settings.showContextDrawer ?? true);
+          setShowThoughtChainFeature(settings.showThoughtChain ?? true);
+          setShowFollowUps(settings.showFollowUps ?? true);
+          setShowRichActions(settings.showRichActions ?? true);
+          setEnableWebSocketButton(settings.enableWebSocket ?? false);
+
+          if (!selectedModel) setSelectedModel(settings.modelName || 'gemini-3-flash-preview');
+      } catch (e) {
+          // 不要白屏：失败时保留默认值
+          console.error('Failed to load system settings for Chat:', e);
+      }
   };
 
   useEffect(() => {
       loadConfig();
-      window.addEventListener('focus', loadConfig);
-      return () => window.removeEventListener('focus', loadConfig);
   }, []);
 
   useEffect(() => {
@@ -1449,7 +1456,8 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
         </div>
 
         <div className="flex items-center gap-2">
-            {/* WebSocket切换按钮（类似大公司的实现） */}
+            {/* WebSocket切换按钮（类似大公司的实现）- 仅在管理后台启用时显示 */}
+            {enableWebSocketButton && (
             <button 
                 onClick={() => {
                     const newValue = !useWebSocket;
@@ -1469,6 +1477,7 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
             >
                 <Zap size={18} />
             </button>
+            )}
             
             {showSimulator && (
                 <button 

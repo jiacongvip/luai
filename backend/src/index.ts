@@ -16,6 +16,8 @@ import analyticsRoutes from './routes/analytics.js';
 import filesRoutes from './routes/files.js';
 import exportRoutes from './routes/export.js';
 import apiConfigRoutes from './routes/api-config.js';
+import preferencesRoutes from './routes/preferences.js';
+import systemSettingsRoutes from './routes/system-settings.js';
 import { securityHeaders, xssProtection, sqlInjectionProtection, rateLimitPresets } from './middleware/security.js';
 import { swaggerDocument } from './swagger.js';
 
@@ -31,8 +33,34 @@ const PORT = process.env.PORT || 3001;
 app.use(securityHeaders);
 
 // CORS 配置
+const corsOriginAllowlist = new Set<string>([
+  'http://localhost:4000',
+  'http://127.0.0.1:4000',
+  'http://localhost:4001',
+  'http://127.0.0.1:4001',
+  ...(process.env.CORS_ORIGIN ? [process.env.CORS_ORIGIN] : []),
+]);
+
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:4000',
+  origin: (origin, callback) => {
+    // allow non-browser requests (no Origin header)
+    if (!origin) return callback(null, true);
+
+    // explicit allowlist
+    if (corsOriginAllowlist.has(origin)) return callback(null, true);
+
+    // allow any localhost/127.0.0.1 port in dev
+    try {
+      const url = new URL(origin);
+      if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+        return callback(null, true);
+      }
+    } catch {
+      // ignore parsing errors
+    }
+
+    return callback(new Error(`CORS blocked for origin: ${origin}`));
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Confirm-Token'],
@@ -106,6 +134,8 @@ app.use('/api/analytics', analyticsRoutes);
 app.use('/api/files', rateLimitPresets.upload, filesRoutes); // 上传限流
 app.use('/api/export', exportRoutes);
 app.use('/api/admin/api-configs', apiConfigRoutes); // API 配置管理
+app.use('/api/preferences', preferencesRoutes); // 用户偏好设置
+app.use('/api/system-settings', systemSettingsRoutes); // 系统级全局设置
 
 // 错误处理
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -116,9 +146,17 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 // 启动服务器
-const server = app.listen(PORT, () => {
+const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📡 API available at http://localhost:${PORT}/api`);
+  
+  // 初始化数据库Schema（迁移preferences字段）
+  try {
+    const { ensurePreferencesSchema } = await import('./services/preferencesMigration.js');
+    await ensurePreferencesSchema();
+  } catch (error) {
+    console.error('⚠️ Failed to migrate preferences schema:', error);
+  }
   
   // 初始化 WebSocket 服务（类似 ChatGPT、Claude 的实现）
   try {
