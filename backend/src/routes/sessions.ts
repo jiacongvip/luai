@@ -111,19 +111,7 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
       updatedAt: new Date(session.updated_at).getTime(),
       isGroup: session.is_group,
       participants: session.participants || [],
-      messages: messagesResult.rows.map((msg) => {
-        // 解析 interactive_options（如果是字符串则解析为JSON）
-        let interactiveOptions = msg.interactive_options;
-        if (interactiveOptions && typeof interactiveOptions === 'string') {
-          try {
-            interactiveOptions = JSON.parse(interactiveOptions);
-          } catch (e) {
-            console.warn('Failed to parse interactive_options:', e);
-            interactiveOptions = null;
-          }
-        }
-        
-        return {
+      messages: messagesResult.rows.map((msg) => ({
         id: msg.id,
         type: msg.type,
         content: msg.content,
@@ -135,10 +123,9 @@ router.get('/:id', authenticate, async (req: AuthRequest, res) => {
         relatedAgentId: msg.related_agent_id,
         thoughtData: msg.thought_data,
         suggestedFollowUps: msg.suggested_follow_ups,
-          interactiveOptions: interactiveOptions,
+        interactiveOptions: msg.interactive_options,
         feedback: msg.feedback,
-        };
-      }),
+      })),
     });
   } catch (error: any) {
     console.error('Get session error:', error);

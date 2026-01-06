@@ -12,7 +12,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - nexus_orchestrator_postgres_data:/var/lib/postgresql/data
       - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U nexus_user -d nexus_db"]
@@ -51,7 +51,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  postgres_data:
+  nexus_orchestrator_postgres_data:  # 使用项目特定的数据卷名称，避免与其他系统冲突
 
 networks:
   nexus-network:

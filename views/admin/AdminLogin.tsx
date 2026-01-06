@@ -31,7 +31,12 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin, language }) => {
           setIsLoading(false);
           return;
         }
+        // 登录成功，调用父组件的回调
         onLogin(response.user);
+        // 注意：不需要在这里设置 setIsLoading(false)，因为登录成功后会跳转页面
+      } else {
+        setError(language === 'zh' ? '登录失败：未返回用户信息' : 'Login failed: No user data returned');
+        setIsLoading(false);
       }
     } catch (error: any) {
       setError(error.message || (language === 'zh' ? '登录失败，请检查您的凭据' : 'Login failed. Please check your credentials.'));
@@ -41,7 +46,7 @@ const AdminLogin: React.FC<AdminLoginProps> = ({ onLogin, language }) => {
 
   const fillAdminAccount = () => {
     setEmail('admin@admin.com');
-    setPassword('111111');
+    setPassword('admin123');
   };
 
   return (

@@ -101,8 +101,8 @@ export function parseSSEChunk(data: Uint8Array): { type: string; content?: strin
     const lines = text.split('\n');
     
     for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const jsonStr = line.substring(6);
+      if (line.startsWith('data:')) {
+        const jsonStr = line.substring(5).trimStart();
         if (jsonStr.trim()) {
           return JSON.parse(jsonStr);
         }
@@ -114,4 +114,3 @@ export function parseSSEChunk(data: Uint8Array): { type: string; content?: strin
     return null;
   }
 }
-

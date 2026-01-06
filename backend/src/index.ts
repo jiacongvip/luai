@@ -18,6 +18,7 @@ import exportRoutes from './routes/export.js';
 import apiConfigRoutes from './routes/api-config.js';
 import preferencesRoutes from './routes/preferences.js';
 import systemSettingsRoutes from './routes/system-settings.js';
+import debugRoutes from './routes/debug.js';
 import { securityHeaders, xssProtection, sqlInjectionProtection, rateLimitPresets } from './middleware/security.js';
 import { swaggerDocument } from './swagger.js';
 
@@ -136,6 +137,7 @@ app.use('/api/export', exportRoutes);
 app.use('/api/admin/api-configs', apiConfigRoutes); // API 配置管理
 app.use('/api/preferences', preferencesRoutes); // 用户偏好设置
 app.use('/api/system-settings', systemSettingsRoutes); // 系统级全局设置
+app.use('/api/debug', debugRoutes); // SSE 自检（排查代理缓冲/首包问题）
 
 // 错误处理
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -183,4 +185,3 @@ const server = app.listen(PORT, async () => {
     console.log('📡 Continuing without WebSocket support');
   }
 });
-

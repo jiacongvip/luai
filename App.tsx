@@ -154,8 +154,9 @@ const App: React.FC = () => {
         }
 
         // 如果有 token，尝试获取用户信息
+        let userData: User | null = null;
         try {
-          const userData = await storage.loadUser();
+          userData = await storage.loadUser();
           if (userData) {
             setCurrentUser(userData);
             
@@ -189,17 +190,32 @@ const App: React.FC = () => {
           // Token 无效，清除并保持登录页
           console.error('Failed to load user:', error);
           localStorage.removeItem('auth_token');
+          // Token 无效时，不继续加载需要认证的数据
+          setIsLoading(false);
+          return;
         }
         
-        // 并行加载其他数据
-        const [agentsData, sessionsData] = await Promise.all([
-          storage.loadAgents().catch(() => MOCK_AGENTS),
+        // 只有在用户登录成功后才加载需要认证的数据
+        // Agents 可以公开访问（使用 optionalAuth），但 Sessions 需要认证
+        const loadPromises: Promise<any>[] = [
+          storage.loadAgents().catch(() => MOCK_AGENTS)
+        ];
+        
+        // 只有在用户已登录时才加载 sessions
+        if (userData) {
+          loadPromises.push(
           storage.loadSessions().catch((error) => {
             console.error('Failed to load sessions from database:', error);
             // 如果加载失败，返回空数组（不使用默认会话，避免覆盖数据库数据）
             return [];
           })
-        ]);
+          );
+        } else {
+          // 用户未登录，sessions 为空数组
+          loadPromises.push(Promise.resolve([]));
+        }
+        
+        const [agentsData, sessionsData] = await Promise.all(loadPromises);
 
         // 确保默认 agent 'a1' 存在（合并 MOCK_AGENTS 中的默认 agent）
         const defaultAgent = MOCK_AGENTS.find(a => a.id === 'a1');
@@ -516,8 +532,9 @@ const App: React.FC = () => {
       }
   };
 
-  const handleAdminLogin = (user: any) => {
+  const handleAdminLogin = async (user: any) => {
       setCurrentUser(user);
+      setIsLoading(false); // 确保加载状态被重置
       if (user.role === 'admin') {
           setAdminRoute(AdminRoute.DASHBOARD);
           window.history.pushState({}, '', '/admin/dashboard');

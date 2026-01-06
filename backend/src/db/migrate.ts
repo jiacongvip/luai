@@ -121,6 +121,22 @@ CREATE TABLE IF NOT EXISTS system_settings (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- API Configs (for admin API configuration management)
+CREATE TABLE IF NOT EXISTS api_configs (
+  id VARCHAR(255) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  provider VARCHAR(100) NOT NULL,
+  encrypted_api_key TEXT NOT NULL,
+  api_key_hint VARCHAR(20),
+  base_url TEXT NOT NULL,
+  model_mapping JSONB DEFAULT '{}'::jsonb,
+  is_active BOOLEAN DEFAULT TRUE,
+  description TEXT,
+  request_config JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON chat_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);

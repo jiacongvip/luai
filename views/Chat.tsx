@@ -430,22 +430,19 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                     }
                 }
                  
-                 const response = await retryWithBackoff(
-                     () => {
-                        console.log('📡 Calling api.messages.send with sessionId:', finalSessionId, {
-                             hasContextData: !!activeProject?.data,
-                             contextDataKeys: activeProject?.data ? Object.keys(activeProject.data) : []
-                         });
-                        return api.messages.send(finalSessionId, textToSend, {
-                             agentId: targetAgent.id,
-                             modelOverride: selectedModel,
-                             contextData: activeProject?.data
-                         });
-                     },
-                     3,
-                     1000
-                 );
-                 console.log('✅ Got response:', response.status, response.ok);
+                 // 流式请求不使用 retryWithBackoff，直接发送以确保实时响应
+                console.log('📡 Calling api.messages.send with sessionId:', finalSessionId, {
+                    hasContextData: !!activeProject?.data,
+                    contextDataKeys: activeProject?.data ? Object.keys(activeProject.data) : []
+                });
+                
+                const response = await api.messages.send(finalSessionId, textToSend, {
+                    agentId: targetAgent.id,
+                    modelOverride: selectedModel,
+                    contextData: activeProject?.data
+                });
+                
+                console.log('✅ Got SSE response:', response.status, response.ok, 'Headers:', response.headers.get('content-type'));
 
                  if (!response.ok) {
                      throw new Error(`HTTP ${response.status}`);
@@ -647,23 +644,6 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                  if (data.type === 'chunk') {
                                      accumulatedText += data.content;
                                     console.log('📝 Accumulated text length:', accumulatedText.length);
-                                    
-                                    // 直接使用累积的文本，不再需要清理OPTIONS_JSON标记
-                                    const cleanedContent = accumulatedText;
-                                    
-                                    // 5. 最后检查：如果还有残留，再次尝试完整匹配
-                                    if (cleanedContent.includes('OPTIONS_JSON') || cleanedContent.includes('options_json')) {
-                                        // 尝试更宽松的匹配
-                                        cleanedContent = cleanedContent.replace(/\[.*?OPTIONS.*?JSON.*?\].*?\[.*?\/.*?OPTIONS.*?JSON.*?\]/gi, '');
-                                        // 如果还有，直接移除包含这些关键词的行
-                                        const lines = cleanedContent.split('\n');
-                                        cleanedContent = lines.filter(line => 
-                                          !line.includes('OPTIONS_JSON') && 
-                                          !line.includes('options_json') &&
-                                          !line.includes('OPTIONS') ||
-                                          !line.includes('JSON')
-                                        ).join('\n').trim();
-                                    }
                                      
                                     // 立即创建消息（如果还没有）
                                      if (!aiMessage) {
@@ -672,7 +652,7 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                          aiMessage = {
                                              id: aiMessageId,
                                              type: MessageType.AGENT,
-                                            content: cleanedContent, // 使用清理后的内容
+                                             content: accumulatedText,
                                              senderId: targetAgent.id,
                                              senderName: language === 'zh' ? (targetAgent.role_zh || targetAgent.name) : targetAgent.name,
                                              senderAvatar: targetAgent.avatar,
@@ -699,7 +679,7 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                             pendingUpdate = requestAnimationFrame(() => {
                                          setMessages(prev => prev.map(m => {
                                              if (m.id === aiMessageId) {
-                                                 return { ...m, content: cleanedContent, isStreaming: true }; // 使用清理后的内容
+                                                 return { ...m, content: accumulatedText, isStreaming: true };
                                              }
                                              return m;
                                          }));
@@ -713,7 +693,7 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                                 pendingUpdate = requestAnimationFrame(() => {
                                                     setMessages(prev => prev.map(m => {
                                                         if (m.id === aiMessageId) {
-                                                            return { ...m, content: cleanedContent, isStreaming: true }; // 使用清理后的内容
+                                                            return { ...m, content: accumulatedText, isStreaming: true };
                                                         }
                                                         return m;
                                                     }));
@@ -737,18 +717,16 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                         accumulatedLength: accumulatedText.length 
                                     });
                                      
-                                    // 确保最终内容已更新
+                                     // 确保最终内容已更新（重要：防止内容丢失）
+                                     // 使用函数式更新，确保使用最新的accumulatedText
+                                    // 使用原始ID查找消息（因为消息可能是用原始ID创建的）
                                     setMessages(prev => {
                                         const updated = prev.map(m => {
                                             // 匹配原始ID或新ID（处理ID更新情况）
                                             if (m.id === originalMessageId || m.id === aiMessageId) {
+                                             // 强制使用完整的accumulatedText
                                                 console.log('✅ Updating message in done event:', accumulatedText.length, 'chars');
-                                                return { 
-                                                    ...m, 
-                                                    id: aiMessageId, 
-                                                    content: accumulatedText,
-                                                    isStreaming: false
-                                                };
+                                             return { ...m, id: aiMessageId, content: accumulatedText, isStreaming: false };
                                          }
                                          return m;
                                         });
@@ -1863,6 +1841,37 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                                 </div>
                             </div>
 
+                            {/* 交互式选项（信息收集时使用） */}
+                            {msg.type === MessageType.AGENT && !msg.isStreaming && msg.interactiveOptions && msg.interactiveOptions.length > 0 && (
+                                <div className="mt-3 ml-11 pr-4">
+                                    <div className="text-xs text-textSecondary mb-2 font-bold">
+                                        {language === 'zh' ? '请选择：' : 'Please select:'}
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                        {msg.interactiveOptions.map((option: any, i: number) => (
+                                            <button
+                                                key={i}
+                                                onClick={() => handleSend(option.value || option.label)}
+                                                className="text-left px-4 py-3 bg-surface border border-border hover:border-primary hover:bg-primary/10 rounded-lg transition-all flex items-start gap-2 shadow-sm hover:shadow-md group"
+                                            >
+                                                <div className="flex-1">
+                                                    <div className="text-sm font-bold text-textMain group-hover:text-primary">
+                                                        {option.label}
+                                                    </div>
+                                                    {option.description && (
+                                                        <div className="text-xs text-textSecondary mt-1">
+                                                            {option.description}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                                <div className="text-primary opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    →
+                                                </div>
+                                            </button>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
 
                             {/* 后续问题建议 */}
                             {msg.type === MessageType.AGENT && !msg.isStreaming && showFollowUps && msg.suggestedFollowUps && (

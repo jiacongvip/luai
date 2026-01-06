@@ -192,6 +192,7 @@ async function* generateWithConfigApi(
     method: 'POST',
     headers: {
       'Authorization': authHeader,
+      'Accept': 'text/event-stream',
       'Content-Type': 'application/json',
       ...(requestConfig.headers || {}),
     },
@@ -241,8 +242,9 @@ async function* generateWithConfigApi(
       buffer = lines.pop() || '';
 
       for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.substring(6).trim();
+        const trimmedLine = line.trim();
+        if (trimmedLine.startsWith('data:')) {
+          const data = trimmedLine.substring(5).trim();
           if (data === '[DONE]') {
             console.log('✅ Received [DONE] signal');
             return;
@@ -250,7 +252,16 @@ async function* generateWithConfigApi(
 
           try {
             const parsed = JSON.parse(data);
-            const content = parsed.choices?.[0]?.delta?.content || '';
+            const choice = parsed.choices?.[0];
+            const delta = choice?.delta || {};
+            const content =
+              (typeof delta.content === 'string' ? delta.content : '') ||
+              (Array.isArray(delta.content)
+                ? delta.content.map((part: any) => (typeof part?.text === 'string' ? part.text : '')).join('')
+                : '') ||
+              (typeof delta.text === 'string' ? delta.text : '') ||
+              (typeof choice?.text === 'string' ? choice.text : '') ||
+              (typeof choice?.message?.content === 'string' ? choice.message.content : '');
             if (content) {
               yieldCount++;
               // 调试：打印前几个 yield
@@ -272,4 +283,3 @@ async function* generateWithConfigApi(
     console.log(`🔚 Stream reader released. Total reads: ${readCount}, yields: ${yieldCount}`);
   }
 }
-

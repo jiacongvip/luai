@@ -71,19 +71,7 @@ router.get('/session/:sessionId', authenticate, async (req: AuthRequest, res) =>
     );
 
     res.json({
-      messages: messages.map((msg: any) => {
-        // 解析 interactive_options（如果是字符串则解析为JSON）
-        let interactiveOptions = msg.interactive_options;
-        if (interactiveOptions && typeof interactiveOptions === 'string') {
-          try {
-            interactiveOptions = JSON.parse(interactiveOptions);
-          } catch (e) {
-            console.warn('Failed to parse interactive_options:', e);
-            interactiveOptions = null;
-          }
-        }
-        
-        return {
+      messages: messages.map((msg: any) => ({
         id: msg.id,
         type: msg.type,
         content: msg.content,
@@ -95,10 +83,9 @@ router.get('/session/:sessionId', authenticate, async (req: AuthRequest, res) =>
         relatedAgentId: msg.related_agent_id,
         thoughtData: msg.thought_data,
         suggestedFollowUps: msg.suggested_follow_ups,
-          interactiveOptions: interactiveOptions,
+        interactiveOptions: msg.interactive_options,
         feedback: msg.feedback,
-        };
-      }),
+      })),
       pagination: {
         total: parseInt(countResult.rows[0].total),
         hasMore: messages.length === Number(limit),
@@ -171,6 +158,22 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
     
     // 立即刷新响应头
     res.flushHeaders();
+    // 立即发送一个注释帧，避免部分代理/浏览器等待首包导致“看起来不流”
+    res.write(':\n\n');
+
+    // 定时发送心跳，避免链路空闲被缓冲/断开（如 Nginx/Cloudflare 等）
+    const keepAliveTimer = setInterval(() => {
+      if (res.writableEnded) return;
+      try {
+        res.write(':\n\n');
+      } catch {
+        // ignore
+      }
+    }, 15_000);
+
+    const cleanupKeepAlive = () => clearInterval(keepAliveTimer);
+    res.on('close', cleanupKeepAlive);
+    res.on('finish', cleanupKeepAlive);
 
     try {
       // 获取 Agent 信息（如果需要）
@@ -306,13 +309,21 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
           hasYieldedChunk = true;
         chunkCount++;
         fullResponse += chunk;
-          // 调试：打印每个 chunk
-          if (chunkCount <= 5 || chunkCount % 10 === 0) {
-            console.log(`📦 Chunk ${chunkCount}: "${chunk.substring(0, 50)}..." (${chunk.length} chars)`);
+          // 调试：打印每个 chunk（减少日志量）
+          if (chunkCount <= 3 || chunkCount % 20 === 0) {
+            console.log(`📦 Chunk ${chunkCount}: "${chunk.substring(0, 30)}..." (${chunk.length} chars)`);
           }
         // 立即发送每个 chunk，确保流式输出流畅
           const sseData = `data: ${JSON.stringify({ type: 'chunk', content: chunk })}\n\n`;
+          
+          // 写入数据
           const success = res.write(sseData);
+          
+          // 强制刷新缓冲区，确保数据立即发送到客户端
+          // 这是实现真正流式输出的关键
+          if (typeof (res as any).flush === 'function') {
+            (res as any).flush();
+          }
           
           // 如果写入缓冲区满，等待 drain 事件
           if (!success) {
@@ -339,7 +350,24 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
         return;
       }
 
-      // 保存 AI 响应
+      // 解析交互式选项（从 [OPTIONS_JSON] 标记中提取）
+      let interactiveOptions = null;
+      const optionsMatch = fullResponse.match(/\[OPTIONS_JSON\]([\s\S]*?)\[\/OPTIONS_JSON\]/);
+      if (optionsMatch) {
+        try {
+          const optionsData = JSON.parse(optionsMatch[1].trim());
+          if (optionsData.options && Array.isArray(optionsData.options)) {
+            interactiveOptions = optionsData.options;
+            // 从回复内容中移除 JSON 标记（保持内容清洁）
+            fullResponse = fullResponse.replace(/\[OPTIONS_JSON\][\s\S]*?\[\/OPTIONS_JSON\]/g, '').trim();
+            console.log('✅ Parsed interactive options:', interactiveOptions.length, 'options');
+          }
+        } catch (e) {
+          console.warn('⚠️ Failed to parse options JSON:', e);
+        }
+      }
+
+      // 保存 AI 响应（包含交互式选项）
       await query(
         `INSERT INTO messages (id, session_id, type, content, sender_id, sender_name, timestamp, related_agent_id, interactive_options)
          VALUES ($1, $2, 'AGENT', $3, $4, $5, $6, $7, $8)`,
@@ -351,19 +379,12 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
           agentName,
           Date.now().toString(),
           agentId || 'a1',
-          null, // 不再保存交互式选项
+          interactiveOptions ? JSON.stringify(interactiveOptions) : null,
         ]
       );
 
       // 发送完成信号
-      const doneEvent = {
-        type: 'done',
-        messageId: aiMessageId,
-      };
-      console.log('📤 Sending done event:', { 
-        messageId: aiMessageId,
-      });
-      res.write(`data: ${JSON.stringify(doneEvent)}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'done', messageId: aiMessageId })}\n\n`);
       res.end();
     } catch (error: any) {
       console.error('AI generation error:', error);
@@ -406,4 +427,3 @@ router.patch('/:id/feedback', authenticate, async (req: AuthRequest, res) => {
 });
 
 export default router;
-

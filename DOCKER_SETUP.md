@@ -120,7 +120,7 @@ docker-compose restart backend
 
 ### 数据库持久化
 
-数据存储在 Docker volume `postgres_data` 中，即使删除容器，数据也不会丢失。
+数据存储在 Docker volume `nexus_orchestrator_postgres_data` 中，即使删除容器，数据也不会丢失。
 
 删除所有数据（谨慎操作）：
 
@@ -196,4 +196,3 @@ docker-compose exec backend npm run migrate
 - 数据库初始化需要几秒钟
 - 使用 `docker-compose logs -f` 实时查看日志
 - 数据持久化在 volume 中，删除容器不会丢失数据
-

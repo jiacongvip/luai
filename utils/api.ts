@@ -58,9 +58,22 @@ async function apiRequest<T>(
 
   if (!response.ok) {
     if (response.status === 401) {
-      // Token 过期，清除并跳转到登录
+      // Token 过期，清除 token
       clearAuthToken();
+      
+      // 只有在非登录页面时才跳转，避免循环跳转
+      const currentPath = window.location.pathname;
+      if (!currentPath.includes('/login') && !currentPath.includes('/admin/login')) {
+        // 延迟跳转，避免在初始化时立即跳转导致错误提示
+        setTimeout(() => {
+          if (currentPath.startsWith('/admin')) {
+            window.location.href = '/admin/login';
+          } else {
       window.location.href = '/login';
+          }
+        }, 100);
+      }
+      
       const error: any = new Error('Unauthorized');
       error.status = 401;
       if (loggerInstance) {
