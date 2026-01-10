@@ -30,10 +30,11 @@ COPY --from=frontend-builder /app/dist /usr/share/nginx/html
 # 复制 Nginx 配置
 COPY nginx.conf /etc/nginx/conf.d/default.conf.template
 
-# 创建启动脚本，动态替换端口
+# 创建启动脚本，动态替换端口和后端地址
 RUN echo '#!/bin/sh' > /docker-entrypoint.sh && \
     echo 'PORT=${PORT:-80}' >> /docker-entrypoint.sh && \
-    echo 'sed "s/\${PORT}/$PORT/g" /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo 'BACKEND_URL=${BACKEND_URL:-http://localhost:3001}' >> /docker-entrypoint.sh && \
+    echo 'sed -e "s/\${PORT}/$PORT/g" -e "s|\${BACKEND_URL}|$BACKEND_URL|g" /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
     echo 'exec nginx -g "daemon off;"' >> /docker-entrypoint.sh && \
     chmod +x /docker-entrypoint.sh
 
