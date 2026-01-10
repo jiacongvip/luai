@@ -154,6 +154,173 @@ const server = app.listen(PORT, async () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📡 API available at http://localhost:${PORT}/api`);
   
+  // 自动运行数据库迁移（如果表不存在）
+  try {
+    const { query } = await import('./db/connection.js');
+    // 检查 users 表是否存在
+    const tableCheck = await query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_schema = 'public' 
+        AND table_name = 'users'
+      );
+    `);
+    
+    if (!tableCheck.rows[0].exists) {
+      console.log('🔄 Tables not found, running database migration...');
+      // 直接执行迁移逻辑
+      const { readFileSync } = await import('fs');
+      const { join, dirname } = await import('path');
+      const { fileURLToPath } = await import('url');
+      
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      
+      // 读取 schema
+      const possiblePaths = [
+        join(__dirname, '../../../utils/postgresSchema.ts'),
+        join('/app', 'utils/postgresSchema.ts'),
+        join(process.cwd(), 'utils/postgresSchema.ts'),
+      ];
+      
+      let schemaSQL = '';
+      for (const path of possiblePaths) {
+        try {
+          const content = readFileSync(path, 'utf-8');
+          const match = content.match(/export const POSTGRES_SCHEMA = `([\s\S]*?)`;/);
+          if (match) {
+            schemaSQL = match[1].trim();
+            break;
+          }
+        } catch {
+          continue;
+        }
+      }
+      
+      if (!schemaSQL) {
+        // 使用简化版 schema
+        schemaSQL = `
+CREATE TABLE IF NOT EXISTS users (
+  id VARCHAR(255) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  email VARCHAR(255) UNIQUE NOT NULL,
+  password_hash VARCHAR(255),
+  avatar TEXT,
+  role VARCHAR(50) DEFAULT 'user',
+  status VARCHAR(50) DEFAULT 'active',
+  credits DECIMAL(10, 4) DEFAULT 0.0000,
+  preferences TEXT,
+  active_project_id VARCHAR(255),
+  last_login_at TIMESTAMP WITH TIME ZONE,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS agents (
+  id VARCHAR(255) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  role VARCHAR(100),
+  role_zh VARCHAR(100),
+  description TEXT,
+  description_zh TEXT,
+  avatar TEXT,
+  price_per_message DECIMAL(10, 4) DEFAULT 0.00,
+  category VARCHAR(100),
+  system_prompt TEXT NOT NULL,
+  styles TEXT[],
+  is_public BOOLEAN DEFAULT TRUE,
+  created_by VARCHAR(255),
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS chat_sessions (
+  id VARCHAR(255) PRIMARY KEY,
+  user_id VARCHAR(255) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  title VARCHAR(255),
+  last_message TEXT,
+  is_group BOOLEAN DEFAULT FALSE,
+  participants TEXT[],
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS messages (
+  id VARCHAR(255) PRIMARY KEY,
+  session_id VARCHAR(255) NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  type VARCHAR(50) NOT NULL,
+  content TEXT NOT NULL,
+  sender_id VARCHAR(255),
+  sender_name VARCHAR(255),
+  sender_avatar TEXT,
+  timestamp BIGINT NOT NULL,
+  cost DECIMAL(10, 4) DEFAULT 0,
+  related_agent_id VARCHAR(255),
+  thought_data JSONB,
+  suggested_follow_ups JSONB,
+  interactive_options JSONB,
+  feedback VARCHAR(20)
+);
+CREATE TABLE IF NOT EXISTS projects (
+  id VARCHAR(255) PRIMARY KEY,
+  user_id VARCHAR(255) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  data JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS system_settings (
+  key VARCHAR(100) PRIMARY KEY,
+  value JSONB NOT NULL,
+  description TEXT,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS api_configs (
+  id VARCHAR(255) PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  provider VARCHAR(100) NOT NULL,
+  encrypted_api_key TEXT NOT NULL,
+  api_key_hint VARCHAR(20),
+  base_url TEXT NOT NULL,
+  model_mapping JSONB DEFAULT '{}'::jsonb,
+  is_active BOOLEAN DEFAULT TRUE,
+  description TEXT,
+  request_config JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON chat_sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_projects_user ON projects(user_id);
+        `.trim();
+      }
+      
+      // 执行迁移
+      const statements = schemaSQL
+        .split(';')
+        .map(s => s.trim())
+        .filter(s => s.length > 0 && !s.startsWith('--') && !s.startsWith('/*'));
+      
+      for (const statement of statements) {
+        if (statement.trim()) {
+          try {
+            await query(statement + ';');
+            console.log(`✅ Created table/index: ${statement.substring(0, 50)}...`);
+          } catch (err: any) {
+            if (!err.message?.includes('already exists') && !err.message?.includes('duplicate')) {
+              console.error(`⚠️ Migration warning: ${err.message}`);
+            }
+          }
+        }
+      }
+      
+      console.log('✅ Database migration completed');
+    } else {
+      console.log('✅ Database tables already exist');
+    }
+  } catch (error) {
+    console.error('⚠️ Failed to check/run migration:', error);
+    console.log('📡 Continuing startup...');
+  }
+  
   // 初始化数据库Schema（迁移preferences字段）
   try {
     const { ensurePreferencesSchema } = await import('./services/preferencesMigration.js');
