@@ -57,6 +57,14 @@ app.use(cors({
       if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
         return callback(null, true);
       }
+      // 允许 Railway 域名 (*.up.railway.app)
+      if (url.hostname.endsWith('.up.railway.app')) {
+        return callback(null, true);
+      }
+      // 允许 Railway 内部域名 (*.railway.internal)
+      if (url.hostname.endsWith('.railway.internal')) {
+        return callback(null, true);
+      }
     } catch {
       // ignore parsing errors
     }

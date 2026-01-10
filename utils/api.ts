@@ -1,5 +1,23 @@
 // API 客户端配置
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3001/api';
+// 自动检测环境：生产环境使用当前域名的 /api，开发环境使用 localhost
+const getApiBaseUrl = () => {
+  // 如果设置了环境变量，优先使用
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  
+  // 生产环境：使用后端服务地址
+  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+    // Railway 部署：前端和后端是分开的服务
+    // 后端地址需要在这里配置
+    return 'https://luai-production.up.railway.app/api';
+  }
+  
+  // 开发环境
+  return 'http://localhost:3001/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // 延迟导入logger，避免循环依赖
 let logger: any = null;
