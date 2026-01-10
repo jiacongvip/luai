@@ -5,9 +5,21 @@ dotenv.config();
 
 const { Pool } = pg;
 
+// 获取数据库连接字符串
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl) {
+  console.error('❌ DATABASE_URL environment variable is not set!');
+  throw new Error('DATABASE_URL is required');
+}
+
+// 调试：打印连接信息（隐藏密码）
+const urlObj = new URL(databaseUrl);
+const maskedUrl = `${urlObj.protocol}//${urlObj.username}:***@${urlObj.hostname}:${urlObj.port}${urlObj.pathname}`;
+console.log('🔗 Database connection:', maskedUrl);
+
 // 创建数据库连接池
 export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
+  connectionString: databaseUrl,
   // 连接池配置
   max: 20, // 最大连接数
   idleTimeoutMillis: 30000,
