@@ -34,7 +34,13 @@ COPY nginx.conf /etc/nginx/conf.d/default.conf.template
 RUN echo '#!/bin/sh' > /docker-entrypoint.sh && \
     echo 'PORT=${PORT:-80}' >> /docker-entrypoint.sh && \
     echo 'BACKEND_URL=${BACKEND_URL:-http://localhost:3001}' >> /docker-entrypoint.sh && \
+    echo 'echo "=== Nginx Configuration ==="' >> /docker-entrypoint.sh && \
+    echo 'echo "PORT=$PORT"' >> /docker-entrypoint.sh && \
+    echo 'echo "BACKEND_URL=$BACKEND_URL"' >> /docker-entrypoint.sh && \
     echo 'sed -e "s/\${PORT}/$PORT/g" -e "s|\${BACKEND_URL}|$BACKEND_URL|g" /etc/nginx/conf.d/default.conf.template > /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo 'echo "=== Generated Nginx Config ==="' >> /docker-entrypoint.sh && \
+    echo 'grep "listen" /etc/nginx/conf.d/default.conf' >> /docker-entrypoint.sh && \
+    echo 'echo "=== Starting Nginx ==="' >> /docker-entrypoint.sh && \
     echo 'exec nginx -g "daemon off;"' >> /docker-entrypoint.sh && \
     chmod +x /docker-entrypoint.sh
 
