@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
-import { Shield, Menu, LogOut, Home, Users, Bot, Settings, Workflow as WorkflowIcon, ClipboardList, Lightbulb, Database, BarChart2, FileText, Globe } from 'lucide-react';
+import { Shield, Menu, LogOut, Home, Users, Bot, Settings, Workflow as WorkflowIcon, ClipboardList, Lightbulb, Database, BarChart2, FileText, Globe, Wand2 } from 'lucide-react';
 import { Language, User as UserType } from '../../types';
 import { translations } from '../../utils/translations';
 import { clearAuthToken } from '../../utils/api';
 import { storage } from '../../utils/storage';
 
-type AdminTab = 'analytics' | 'users' | 'agents' | 'squads' | 'settings' | 'workflows' | 'onboarding' | 'templates' | 'knowledge' | 'audit';
+type AdminTab = 'analytics' | 'users' | 'agents' | 'squads' | 'settings' | 'workflows' | 'onboarding' | 'templates' | 'knowledge' | 'audit' | 'personacraft';
 
 interface AdminLayoutProps {
   children: React.ReactNode;
@@ -41,6 +41,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({
     { id: 'workflows' as AdminTab, label: t.tabs.workflows, icon: WorkflowIcon },
     { id: 'templates' as AdminTab, label: t.tabs.templates, icon: Lightbulb },
     { id: 'knowledge' as AdminTab, label: t.tabs.knowledge, icon: Database },
+    { id: 'personacraft' as AdminTab, label: language === 'zh' ? '知识库优化' : 'PersonaCraft AI', icon: Wand2 },
     { id: 'onboarding' as AdminTab, label: t.tabs.onboarding, icon: ClipboardList },
     { id: 'settings' as AdminTab, label: t.tabs.settings, icon: Settings },
     { id: 'audit' as AdminTab, label: language === 'zh' ? '审计日志' : 'Audit Logs', icon: FileText }

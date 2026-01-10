@@ -3,6 +3,7 @@
 
 -- 启用必要的扩展
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- 注意：实际的表结构会通过 migrate.ts 脚本创建
 -- 这里只做一些基础初始化

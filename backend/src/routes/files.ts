@@ -2,14 +2,78 @@ import express from 'express';
 import { query } from '../db/connection.js';
 import { authenticate, AuthRequest } from '../middleware/auth.js';
 import { auditLog } from '../middleware/security.js';
-import { GoogleGenAI } from '@google/genai';
+import { getActiveApiConfig } from '../services/apiService.js';
 
 const router = express.Router();
 
-// Gemini 客户端（用于生成嵌入向量）
-const genAI = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || '',
-});
+// ============================================
+// Embedding 服务（支持 NewAPI / OpenAI 兼容接口）
+// ============================================
+
+/**
+ * 生成文本的嵌入向量
+ * 优先使用 NewAPI 配置，支持 OpenAI 兼容的 /v1/embeddings 接口
+ */
+async function generateEmbedding(text: string): Promise<number[] | null> {
+  try {
+    const apiConfig = await getActiveApiConfig();
+    if (!apiConfig) {
+      console.warn('⚠️ No API config found for embedding');
+      return null;
+    }
+
+    // 构建 embedding 请求 URL
+    // NewAPI / OpenAI 兼容接口通常是 baseUrl + /v1/embeddings
+    let embeddingUrl = apiConfig.baseUrl;
+    if (!embeddingUrl.endsWith('/v1/embeddings')) {
+      embeddingUrl = embeddingUrl.replace(/\/v1\/chat\/completions\/?$/, '/v1/embeddings');
+      if (!embeddingUrl.endsWith('/v1/embeddings')) {
+        embeddingUrl = embeddingUrl.replace(/\/?$/, '/v1/embeddings');
+      }
+    }
+
+    // 选择 embedding 模型
+    // 优先使用 modelMapping 中配置的 embedding 模型，否则使用默认模型
+    const embeddingModel = apiConfig.modelMapping?.['embedding'] 
+      || apiConfig.modelMapping?.['text-embedding-3-small']
+      || 'text-embedding-3-small';  // OpenAI 默认 embedding 模型
+
+    console.log(`📊 Generating embedding via ${apiConfig.provider}: ${embeddingUrl}`);
+
+    const response = await fetch(embeddingUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiConfig.apiKey}`,
+        ...(apiConfig.requestConfig?.headers || {}),
+      },
+      body: JSON.stringify({
+        model: embeddingModel,
+        input: text,
+      }),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`❌ Embedding API error: ${response.status} - ${errorText}`);
+      return null;
+    }
+
+    const data = await response.json();
+    const embedding = data.data?.[0]?.embedding;
+    
+    if (embedding && Array.isArray(embedding)) {
+      console.log(`✅ Generated embedding with ${embedding.length} dimensions`);
+      return embedding;
+    }
+
+    console.warn('⚠️ No embedding in response:', data);
+    return null;
+  } catch (error: any) {
+    console.error('❌ Embedding generation failed:', error.message);
+    return null;
+  }
+}
 
 // ============================================
 // 知识库/文件管理 API
@@ -130,34 +194,39 @@ async function createKnowledgeVectors(fileId: string, content: string) {
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       
-      // 生成嵌入向量
-      let embedding: number[] | null = null;
-      try {
-        const result = await genAI.models.embedContent({
-          model: 'text-embedding-004',
-          contents: chunk,
-        });
-        embedding = result.embeddings?.[0]?.values || null;
-      } catch (e) {
-        console.warn('Failed to generate embedding:', e);
-      }
+      // 生成嵌入向量（使用 NewAPI / OpenAI 兼容接口）
+      const embedding = await generateEmbedding(chunk);
 
       const vectorId = `vec_${Date.now()}_${i}`;
 
       // 存储向量
       if (embedding) {
+        try {
         await query(
           `INSERT INTO knowledge_vectors (id, file_id, chunk_index, chunk_content, embedding, metadata)
            VALUES ($1, $2, $3, $4, $5::vector, $6)`,
           [vectorId, fileId, i, chunk, `[${embedding.join(',')}]`, JSON.stringify({ chunkIndex: i })]
         );
+        } catch (dbErr: any) {
+          // 如果 vector 扩展不可用，只存储文本
+          console.warn('Vector insert failed (pgvector may not be installed), storing text only:', dbErr.message);
+          await query(
+            `INSERT INTO knowledge_vectors (id, file_id, chunk_index, chunk_content, metadata)
+             VALUES ($1, $2, $3, $4, $5)`,
+            [vectorId, fileId, i, chunk, JSON.stringify({ chunkIndex: i })]
+          );
+        }
       } else {
-        // 没有向量，只存储文本
+        // 没有向量，只存储文本（fallback：关键词搜索）
+        try {
         await query(
           `INSERT INTO knowledge_vectors (id, file_id, chunk_index, chunk_content, metadata)
            VALUES ($1, $2, $3, $4, $5)`,
           [vectorId, fileId, i, chunk, JSON.stringify({ chunkIndex: i })]
         );
+        } catch (dbErr: any) {
+          console.warn('Failed to store text chunk:', dbErr.message);
+        }
       }
     }
 
@@ -199,22 +268,14 @@ router.post('/search', authenticate, async (req: AuthRequest, res) => {
       return res.status(400).json({ error: 'Search query required' });
     }
 
-    // 生成查询向量
-    let queryEmbedding: number[] | null = null;
-    try {
-      const result = await genAI.models.embedContent({
-        model: 'text-embedding-004',
-        contents: searchQuery,
-      });
-      queryEmbedding = result.embeddings?.[0]?.values || null;
-    } catch (e) {
-      console.warn('Failed to generate query embedding:', e);
-    }
+    // 生成查询向量（使用 NewAPI / OpenAI 兼容接口）
+    const queryEmbedding = await generateEmbedding(searchQuery);
 
     let results;
 
     if (queryEmbedding) {
       // 向量相似度搜索
+      try {
       let searchSql = `
         SELECT 
           kv.id, kv.chunk_content, kv.chunk_index, kv.metadata,
@@ -241,7 +302,14 @@ router.post('/search', authenticate, async (req: AuthRequest, res) => {
 
       const searchResult = await query(searchSql, params);
       results = searchResult.rows;
-    } else {
+      } catch (vectorErr: any) {
+        console.warn('Vector search failed, falling back to keyword search:', vectorErr.message);
+        // 如果向量搜索失败，回退到关键词搜索
+        results = null;
+      }
+    }
+    
+    if (!results) {
       // 回退到关键词搜索
       let searchSql = `
         SELECT 
@@ -304,8 +372,12 @@ router.delete('/:id', authenticate, auditLog('DELETE', 'file'), async (req: Auth
       return res.status(404).json({ error: 'File not found' });
     }
 
-    // 删除关联的向量
+    // 删除关联的向量 (try-catch 避免因为 pgvector 未安装导致表不存在而失败)
+    try {
     await query(`DELETE FROM knowledge_vectors WHERE file_id = $1`, [id]);
+    } catch (vErr: any) {
+      console.warn('Could not delete knowledge vectors (table might not exist):', vErr.message);
+    }
 
     // 删除文件记录
     await query(`DELETE FROM files WHERE id = $1`, [id]);

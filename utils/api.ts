@@ -243,6 +243,13 @@ export const api = {
       apiRequest<any>(`/agents/${id}`, {
         method: 'DELETE',
       }),
+    // Agent workflow graph (Coze-like builder)
+    getWorkflow: (id: string) => apiRequest<any>(`/agents/${id}/workflow`),
+    updateWorkflow: (id: string, data: { nodes: any[]; edges: any[] }) =>
+      apiRequest<any>(`/agents/${id}/workflow`, {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      }),
   },
 
   // 项目（上下文）
@@ -634,6 +641,34 @@ export const api = {
       apiRequest<{ success: boolean; preferences: any }>(`/preferences/feature/${feature}`, {
         method: 'PATCH',
         body: JSON.stringify({ enabled }),
+      }),
+  },
+
+  // ============================================
+  // PersonaCraft AI 知识库优化
+  // ============================================
+  personacraft: {
+    // 生成初始优化（系统提示词和优化后的知识库）
+    generate: (rawKnowledge: string) =>
+      apiRequest<{ systemPrompt: string; optimizedKnowledge: string }>('/personacraft/generate', {
+        method: 'POST',
+        body: JSON.stringify({ rawKnowledge }),
+      }),
+    
+    // 精炼内容（根据用户指令优化）
+    refine: (data: {
+      currentPrompt: string;
+      currentKnowledge: string;
+      instruction: string;
+      history?: { role: string; content: string }[];
+    }) =>
+      apiRequest<{
+        systemPrompt: string | null;
+        optimizedKnowledge: string | null;
+        chatResponse: string;
+      }>('/personacraft/refine', {
+        method: 'POST',
+        body: JSON.stringify(data),
       }),
   },
 

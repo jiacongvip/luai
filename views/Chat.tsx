@@ -178,6 +178,11 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
       ? participatingAgents[0]
       : null;
 
+  // 欢迎语（仅单智能体对话时展示一次）
+  const activeWelcomeMessage = (!activeSession.isGroup && participatingAgents.length === 1)
+    ? (participatingAgents[0].welcomeMessage || '').trim()
+    : '';
+
   // --- SMART AUTO SCROLL ---
   const scrollToBottom = () => {
     if (!chatContainerRef.current || !messagesEndRef.current) return;
@@ -1675,7 +1680,34 @@ const Chat: React.FC<ChatProps> = ({ user, activeSession, messages, setMessages,
                 className="flex-1 overflow-y-auto p-4 space-y-6 scrollbar-hide"
                 ref={chatContainerRef} // Attached Ref
               >
-                {messages.length <= 1 ? renderZeroState() : null}
+                {/* 零状态提示：仅在没有欢迎语时显示 */}
+                {messages.length <= 1 && !activeWelcomeMessage ? renderZeroState() : null}
+
+                {/* 欢迎语：当没有历史消息时展示一次（样式与智能体消息一致） */}
+                {messages.length === 0 && activeWelcomeMessage && participatingAgents.length === 1 && (
+                  <div className="flex flex-col items-start mb-4 animate-fade-in">
+                    <div className="flex flex-row max-w-[85%] md:max-w-[75%]">
+                      {/* 智能体头像 */}
+                      <div className="w-8 h-8 rounded-lg bg-surface mr-3 flex-shrink-0 border border-border overflow-hidden mt-1 shadow-sm">
+                        {participatingAgents[0].avatar 
+                          ? <img src={participatingAgents[0].avatar} alt="bot" className="w-full h-full object-cover"/> 
+                          : <Bot size={18} className="m-auto text-textSecondary"/>
+                        }
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        {/* 智能体名称 */}
+                        <div className="text-xs text-textSecondary ml-1 mb-1 flex items-center gap-2">
+                          {participatingAgents[0].name}
+                          <span className="px-1.5 py-0.5 bg-surface border border-border rounded text-[10px] text-textSecondary">AI</span>
+                        </div>
+                        {/* 消息内容 */}
+                        <div className="p-4 rounded-2xl shadow-sm text-sm leading-relaxed bg-surface border border-border text-textMain rounded-tl-sm">
+                          <p className="whitespace-pre-wrap break-words">{activeWelcomeMessage}</p>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {messages.map((msg, index) => {
                     const isLastMessage = index === messages.length - 1;

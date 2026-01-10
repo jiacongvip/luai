@@ -5,6 +5,7 @@ import { translations } from '../utils/translations';
 import { MOCK_ALL_USERS } from '../constants';
 import { Search, Shield, Users, Bot, Settings, Plus, Edit, Trash2, FileText, Upload, X, Workflow as WorkflowIcon, ClipboardList, GripVertical, Database, Layout, PenTool, Mail, BarChart, Cpu, CheckCircle, UserPlus, CheckSquare, Lightbulb, Zap, TrendingUp, DollarSign, MessageSquare, Activity, AlertCircle, Loader2, Eye, Clock, ArrowUpRight, ArrowDownRight, Globe } from 'lucide-react';
 import OrchestrationStudio from './OrchestrationStudio';
+import PersonaCraft from './PersonaCraft';
 import { storage } from '../utils/storage';
 import AgentEditModal from '../components/modals/AgentEditModal';
 import UserEditModal from '../components/modals/UserEditModal';
@@ -25,7 +26,7 @@ interface AdminDashboardProps {
   onToggleGoalLanding?: (enabled: boolean) => void; 
   agents: Agent[]; 
   onUpdateAgents: (agents: Agent[]) => void;
-  activeTab?: 'analytics' | 'users' | 'agents' | 'squads' | 'settings' | 'workflows' | 'onboarding' | 'templates' | 'knowledge' | 'audit';
+  activeTab?: 'analytics' | 'users' | 'agents' | 'squads' | 'settings' | 'workflows' | 'onboarding' | 'templates' | 'knowledge' | 'audit' | 'personacraft';
 }
 
 const AdminDashboard: React.FC<AdminDashboardProps> = ({ 
@@ -249,6 +250,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   pricePerMessage: updatedAgent.pricePerMessage,
                   category: updatedAgent.category,
                   systemPrompt: updatedAgent.systemPrompt || 'You are a helpful assistant.',
+                  welcomeMessage: updatedAgent.welcomeMessage || '',
                   styles: updatedAgent.styles || [],
               });
               
@@ -266,6 +268,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   pricePerMessage: result.pricePerMessage,
                   category: result.category,
                   systemPrompt: result.systemPrompt,
+                  welcomeMessage: result.welcomeMessage || '',
                   styles: result.styles || [],
                   knowledgeFiles: updatedAgent.knowledgeFiles || [],
               };
@@ -284,6 +287,7 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
                   pricePerMessage: updatedAgent.pricePerMessage,
                   category: updatedAgent.category,
                   systemPrompt: updatedAgent.systemPrompt,
+                  welcomeMessage: updatedAgent.welcomeMessage || '',
                   styles: updatedAgent.styles || [],
               });
               
@@ -301,6 +305,8 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
               action: 'save agent',
               component: 'AdminDashboard',
           });
+          // 让上层（例如 AgentBuilder）能感知失败并提示/不关闭
+          throw error;
       }
   };
 
@@ -1173,6 +1179,11 @@ const AdminDashboard: React.FC<AdminDashboardProps> = ({
       {activeTab === 'workflows' && renderWorkflows()}
             {activeTab === 'templates' && renderTemplates()}
       {activeTab === 'knowledge' && renderKnowledgeBase()}
+      {activeTab === 'personacraft' && (
+        <div className="h-full overflow-hidden p-0">
+          <PersonaCraft language={language} />
+        </div>
+      )}
       {activeTab === 'onboarding' && renderOnboardingConfig()}
       {activeTab === 'audit' && renderAuditLogs()}
             {activeTab === 'settings' && (

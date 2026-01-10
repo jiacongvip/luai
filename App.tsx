@@ -14,6 +14,7 @@ import ProfileComplete from './views/ProfileComplete';
 import XiaohongshuSimulator from './views/XiaohongshuSimulator'; 
 import GoalLanding from './views/GoalLanding';
 import Auth from './views/Auth';
+import PersonaCraft from './views/PersonaCraft';
 import AdminLogin from './views/admin/AdminLogin';
 import AdminLayout from './views/admin/AdminLayout';
 import { MOCK_USER, getWelcomeMessage, MOCK_AGENTS, THEMES, DEFAULT_PROMPT_TEMPLATES } from './constants';
@@ -197,9 +198,15 @@ const App: React.FC = () => {
         
         // 只有在用户登录成功后才加载需要认证的数据
         // Agents 可以公开访问（使用 optionalAuth），但 Sessions 需要认证
-        const loadPromises: Promise<any>[] = [
-          storage.loadAgents().catch(() => MOCK_AGENTS)
-        ];
+        // 管理员在后台时，使用管理员接口加载所有智能体
+        const isAdminUser = userData?.role === 'admin';
+        const isAdminPage = window.location.pathname.startsWith('/admin');
+        
+        const loadAgentsPromise = isAdminUser && isAdminPage
+          ? api.admin.getAllAgents().catch(() => storage.loadAgents().catch(() => MOCK_AGENTS))
+          : storage.loadAgents().catch(() => MOCK_AGENTS);
+        
+        const loadPromises: Promise<any>[] = [loadAgentsPromise];
         
         // 只有在用户已登录时才加载 sessions
         if (userData) {
@@ -823,20 +830,13 @@ const App: React.FC = () => {
           
           console.log('✅ Session created from agent marketplace:', savedSession.id);
           
+          // 创建空会话，欢迎语由 Chat.tsx 自动显示（当 messages.length === 0 时）
           const newSession: ChatSession = {
               id: savedSession.id,
               title: agent.name,
               lastMessage: '',
               updatedAt: Date.now(),
-              messages: [{ 
-                  id: `init-${savedSession.id}`, 
-                  type: MessageType.AGENT, 
-                  content: language === 'zh' ? `你好，我是${agent.name}。` : `Hello, I am ${agent.name}. How can I assist you?`,
-                  senderId: agent.id, 
-                  timestamp: Date.now(), 
-                  senderName: agent.name,
-                  senderAvatar: agent.avatar
-              }],
+              messages: [], // 不添加欢迎语消息，让 Chat.tsx 自动显示
               isGroup: false,
               participants: [agent.id]
           };

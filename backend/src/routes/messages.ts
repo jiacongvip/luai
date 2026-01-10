@@ -7,9 +7,144 @@ import {
   generateFollowUpQuestions,
   detectContextUpdate,
 } from '../services/geminiService.js';
-import { generateChatStream } from '../services/apiService.js';
+import { generateChatStream, getActiveApiConfig } from '../services/apiService.js';
 
 const router = express.Router();
+
+// ============================================
+// 知识库检索功能（RAG）
+// ============================================
+
+/**
+ * 生成文本的嵌入向量
+ */
+async function generateEmbedding(text: string): Promise<number[] | null> {
+  try {
+    const apiConfig = await getActiveApiConfig();
+    if (!apiConfig) {
+      console.warn('⚠️ No API config found for embedding');
+      return null;
+    }
+
+    // 构建 embedding 请求 URL
+    let embeddingUrl = apiConfig.baseUrl;
+    if (!embeddingUrl.endsWith('/v1/embeddings')) {
+      embeddingUrl = embeddingUrl.replace(/\/v1\/chat\/completions\/?$/, '/v1/embeddings');
+      if (!embeddingUrl.endsWith('/v1/embeddings')) {
+        embeddingUrl = embeddingUrl.replace(/\/?$/, '/v1/embeddings');
+      }
+    }
+
+    // 选择 embedding 模型
+    const embeddingModel = apiConfig.modelMapping?.['embedding'] || 'text-embedding-3-small';
+
+    const response = await fetch(embeddingUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiConfig.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: embeddingModel,
+        input: text,
+      }),
+    });
+
+    if (!response.ok) {
+      console.warn(`⚠️ Embedding API error: ${response.status}`);
+      return null;
+    }
+
+    const data = await response.json();
+    return data.data?.[0]?.embedding || null;
+  } catch (error: any) {
+    console.warn('⚠️ Embedding generation failed:', error.message);
+    return null;
+  }
+}
+
+/**
+ * 从知识库检索相关内容
+ */
+async function searchKnowledgeBase(
+  userId: string,
+  agentId: string | null,
+  userQuery: string,
+  limit: number = 3
+): Promise<string> {
+  try {
+    // 生成查询向量
+    const queryEmbedding = await generateEmbedding(userQuery);
+
+    let results: any[] = [];
+
+    if (queryEmbedding) {
+      // 向量相似度搜索
+      try {
+        const searchSql = `
+          SELECT 
+            kv.chunk_content,
+            f.file_name,
+            1 - (kv.embedding <=> $1::vector) as similarity
+          FROM knowledge_vectors kv
+          JOIN files f ON kv.file_id = f.id
+          WHERE f.user_id = $2 ${agentId ? 'AND f.agent_id = $3' : ''}
+          ORDER BY similarity DESC
+          LIMIT $${agentId ? '4' : '3'}
+        `;
+        const params = agentId 
+          ? [`[${queryEmbedding.join(',')}]`, userId, agentId, limit]
+          : [`[${queryEmbedding.join(',')}]`, userId, limit];
+
+        const searchResult = await query(searchSql, params);
+        results = searchResult.rows;
+        console.log(`📚 RAG: Found ${results.length} relevant chunks via vector search`);
+      } catch (vectorErr: any) {
+        console.warn('⚠️ Vector search failed, trying keyword search:', vectorErr.message);
+      }
+    }
+
+    // 如果向量搜索失败或没有结果，回退到关键词搜索
+    if (results.length === 0) {
+      try {
+        const keywordSql = `
+          SELECT 
+            kv.chunk_content,
+            f.file_name,
+            0.5 as similarity
+          FROM knowledge_vectors kv
+          JOIN files f ON kv.file_id = f.id
+          WHERE f.user_id = $1 ${agentId ? 'AND f.agent_id = $2' : ''}
+            AND kv.chunk_content ILIKE $${agentId ? '3' : '2'}
+          LIMIT $${agentId ? '4' : '3'}
+        `;
+        const params = agentId 
+          ? [userId, agentId, `%${userQuery}%`, limit]
+          : [userId, `%${userQuery}%`, limit];
+
+        const keywordResult = await query(keywordSql, params);
+        results = keywordResult.rows;
+        console.log(`📚 RAG: Found ${results.length} relevant chunks via keyword search`);
+      } catch (kwErr: any) {
+        console.warn('⚠️ Keyword search also failed:', kwErr.message);
+      }
+    }
+
+    // 格式化检索结果
+    if (results.length > 0) {
+      const knowledgeContext = results.map((r, i) => 
+        `【知识片段 ${i + 1}】来源: ${r.file_name}\n${r.chunk_content}`
+      ).join('\n\n');
+
+      return `\n\n=== 知识库参考资料（请优先使用以下信息回答用户问题） ===\n${knowledgeContext}\n=== 知识库参考资料结束 ===\n\n`;
+    }
+
+    return '';
+  } catch (error: any) {
+    console.warn('⚠️ Knowledge base search error:', error.message);
+    return '';
+  }
+}
 
 // 获取会话的消息（支持分页）
 router.get('/session/:sessionId', authenticate, async (req: AuthRequest, res) => {
@@ -108,7 +243,7 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
     contextDataKeys: req.body.contextData ? Object.keys(req.body.contextData) : []
   });
   try {
-    const { sessionId, content, agentId, modelOverride, contextData } = req.body;
+    const { sessionId, content, agentId, modelOverride, contextData, systemPromptOverride } = req.body;
 
     if (!sessionId || !content) {
       return res.status(400).json({ error: 'Session ID and content are required' });
@@ -189,6 +324,11 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
         }
       }
 
+      // 🔥 支持前端传入的 systemPromptOverride（用于 AgentBuilder 预览测试，无需先发布）
+      if (systemPromptOverride && typeof systemPromptOverride === 'string' && systemPromptOverride.trim()) {
+        systemPrompt = systemPromptOverride.trim();
+      }
+
       // 获取对话历史（最近20条消息，避免token过多）
       // 注意：排除当前刚插入的用户消息，因为我们会单独添加
       const historyResult = await query(
@@ -205,13 +345,16 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
       if (historyResult.rows.length > 0) {
         const historyMessages = historyResult.rows.map((msg: any) => {
           const role = msg.type === 'USER' ? '用户' : 'AI助手';
-          return `${role}: ${msg.content}`;
+          // 截取AI助手的回复以避免过长，但保留关键内容
+          const content = msg.content;
+          return `${role}: ${content}`;
         }).join('\n\n');
-        conversationHistory = `\n\n=== 对话历史（请仔细阅读，不要重复提问已收集的信息） ===\n${historyMessages}\n=== 结束对话历史 ===\n\n`;
+        conversationHistory = `\n\n=== 对话历史（重要：请仔细阅读！当用户回复数字时，请对照上一条AI消息中的选项列表来理解用户的选择） ===\n${historyMessages}\n=== 结束对话历史 ===\n\n`;
         console.log('📚 Conversation history included:', {
           messageCount: historyResult.rows.length,
           historyLength: conversationHistory.length,
-          lastMessage: historyResult.rows[historyResult.rows.length - 1]?.content?.substring(0, 50)
+          lastUserMessage: historyResult.rows.filter((m: any) => m.type === 'USER').pop()?.content?.substring(0, 50),
+          lastAIMessage: historyResult.rows.filter((m: any) => m.type !== 'USER').pop()?.content?.substring(0, 100)
         });
       } else {
         console.log('⚠️ No conversation history found (this is the first message)');
@@ -284,13 +427,24 @@ router.post('/send', authenticate, async (req: AuthRequest, res) => {
         }
       }
 
+      // 🔥 知识库检索（RAG）- 自动从知识库中检索相关内容
+      let knowledgeContext = '';
+      if (agentId) {
+        knowledgeContext = await searchKnowledgeBase(req.userId!, agentId, content, 3);
+        if (knowledgeContext) {
+          console.log('📚 RAG: Knowledge context injected, length:', knowledgeContext.length);
+        }
+      }
+
       // 使用优先级 API 服务（优先 NewAPI，fallback 到 Gemini）
-      // 重要：将对话历史放在最前面，然后是项目上下文，最后是当前消息
-      const fullPrompt = conversationHistory + contextPrompt + content;
+      // 重要：将对话历史放在最前面，然后是知识库上下文，然后是项目上下文，最后是当前消息
+      const fullPrompt = conversationHistory + knowledgeContext + contextPrompt + content;
       console.log('🔄 Starting AI generation stream...', {
         promptLength: fullPrompt.length,
+        knowledgeContextLength: knowledgeContext.length,
         contextPromptLength: contextPrompt.length,
         contentLength: content.length,
+        hasKnowledge: knowledgeContext.length > 0,
         hasContext: contextPrompt.length > 0,
         modelOverride: modelOverride || 'default'
       });

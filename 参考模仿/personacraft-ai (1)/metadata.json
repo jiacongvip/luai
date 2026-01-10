@@ -1,0 +1,5 @@
+{
+  "name": "PersonaCraft AI",
+  "description": "一个智能体系统，利用 Gemini 模型专门为用户优化人设、文案和知识库。",
+  "requestFramePermissions": []
+}

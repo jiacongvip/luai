@@ -14,7 +14,7 @@ router.get('/', optionalAuth, async (req: AuthRequest, res) => {
     const result = userId
       ? await query(
           `SELECT id, name, role, role_zh, description, description_zh, avatar, price_per_message,
-                  category, system_prompt, styles, is_public, created_by, created_at, updated_at
+                  category, system_prompt, welcome_message, styles, is_public, created_by, created_at, updated_at
            FROM agents
            WHERE is_public = true OR created_by = $1
            ORDER BY created_at DESC`,
@@ -22,7 +22,7 @@ router.get('/', optionalAuth, async (req: AuthRequest, res) => {
         )
       : await query(
           `SELECT id, name, role, role_zh, description, description_zh, avatar, price_per_message,
-                  category, system_prompt, styles, is_public, created_by, created_at, updated_at
+                  category, system_prompt, welcome_message, styles, is_public, created_by, created_at, updated_at
            FROM agents
            WHERE is_public = true
            ORDER BY created_at DESC`
@@ -40,6 +40,7 @@ router.get('/', optionalAuth, async (req: AuthRequest, res) => {
         pricePerMessage: parseFloat(agent.price_per_message),
         category: agent.category,
         systemPrompt: agent.system_prompt,
+        welcomeMessage: agent.welcome_message || '',
         styles: agent.styles || [],
         isPublic: agent.is_public,
         createdBy: agent.created_by,
@@ -57,7 +58,7 @@ router.get('/:id', async (req, res) => {
     const { id } = req.params;
     const result = await query(
       `SELECT id, name, role, role_zh, description, description_zh, avatar, price_per_message,
-              category, system_prompt, styles, is_public, created_by
+              category, system_prompt, welcome_message, styles, is_public, created_by
        FROM agents
        WHERE id = $1 AND (is_public = true OR created_by = $2)`,
       [id, (req as AuthRequest).userId || null]
@@ -79,6 +80,7 @@ router.get('/:id', async (req, res) => {
       pricePerMessage: parseFloat(agent.price_per_message),
       category: agent.category,
       systemPrompt: agent.system_prompt,
+      welcomeMessage: agent.welcome_message || '',
       styles: agent.styles || [],
       isPublic: agent.is_public,
       createdBy: agent.created_by,
@@ -86,6 +88,95 @@ router.get('/:id', async (req, res) => {
   } catch (error: any) {
     console.error('Get agent error:', error);
     res.status(500).json({ error: 'Failed to get agent' });
+  }
+});
+
+// 获取智能体工作流（仅创建者或管理员）
+router.get('/:id/workflow', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+
+    // 检查权限
+    const agentResult = await query('SELECT created_by FROM agents WHERE id = $1', [id]);
+    if (agentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    const existingAgent = agentResult.rows[0];
+
+    const userResult = await query('SELECT role FROM users WHERE id = $1', [req.userId]);
+    const userRole = userResult.rows[0]?.role || 'user';
+    if (existingAgent.created_by !== req.userId && userRole !== 'admin') {
+      return res.status(403).json({ error: 'Permission denied' });
+    }
+
+    const wfResult = await query(
+      `SELECT nodes, edges, updated_at FROM agent_workflows WHERE agent_id = $1`,
+      [id]
+    );
+
+    if (wfResult.rows.length === 0) {
+      // 默认返回空工作流，前端可自行初始化默认节点
+      return res.json({ agentId: id, nodes: [], edges: [], updatedAt: null });
+    }
+
+    return res.json({
+      agentId: id,
+      nodes: wfResult.rows[0].nodes || [],
+      edges: wfResult.rows[0].edges || [],
+      updatedAt: wfResult.rows[0].updated_at,
+    });
+  } catch (error: any) {
+    console.error('Get agent workflow error:', error);
+    res.status(500).json({ error: 'Failed to get agent workflow' });
+  }
+});
+
+// 更新智能体工作流（仅创建者或管理员）
+router.patch('/:id/workflow', authenticate, async (req: AuthRequest, res) => {
+  try {
+    const { id } = req.params;
+    const { nodes, edges } = req.body || {};
+
+    if (!Array.isArray(nodes) || !Array.isArray(edges)) {
+      return res.status(400).json({ error: 'nodes and edges must be arrays' });
+    }
+
+    // 检查权限
+    const agentResult = await query('SELECT created_by FROM agents WHERE id = $1', [id]);
+    if (agentResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Agent not found' });
+    }
+    const existingAgent = agentResult.rows[0];
+
+    const userResult = await query('SELECT role FROM users WHERE id = $1', [req.userId]);
+    const userRole = userResult.rows[0]?.role || 'user';
+    if (existingAgent.created_by !== req.userId && userRole !== 'admin') {
+      return res.status(403).json({ error: 'Permission denied' });
+    }
+
+    // Upsert
+    await query(
+      `INSERT INTO agent_workflows (agent_id, nodes, edges, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (agent_id)
+       DO UPDATE SET nodes = EXCLUDED.nodes, edges = EXCLUDED.edges, updated_at = NOW()`,
+      [id, JSON.stringify(nodes), JSON.stringify(edges)]
+    );
+
+    const wfResult = await query(
+      `SELECT nodes, edges, updated_at FROM agent_workflows WHERE agent_id = $1`,
+      [id]
+    );
+
+    return res.json({
+      agentId: id,
+      nodes: wfResult.rows[0].nodes || [],
+      edges: wfResult.rows[0].edges || [],
+      updatedAt: wfResult.rows[0].updated_at,
+    });
+  } catch (error: any) {
+    console.error('Update agent workflow error:', error);
+    res.status(500).json({ error: 'Failed to update agent workflow' });
   }
 });
 
@@ -124,8 +215,8 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
 
     await query(
       `INSERT INTO agents (id, name, role, role_zh, description, description_zh, avatar,
-                          price_per_message, category, system_prompt, styles, is_public, created_by, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), NOW())`,
+                          price_per_message, category, system_prompt, welcome_message, styles, is_public, created_by, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW())`,
       [
         agentId,
         name,
@@ -137,6 +228,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
         pricePerMessage || 0,
         category || 'General',
         systemPrompt,
+        req.body.welcomeMessage || null,
         styles || [],
         isPublicValue,
         req.userId,
@@ -157,6 +249,7 @@ router.post('/', authenticate, async (req: AuthRequest, res) => {
       pricePerMessage: parseFloat(agent.price_per_message),
       category: agent.category,
       systemPrompt: agent.system_prompt,
+      welcomeMessage: agent.welcome_message || '',
       styles: agent.styles || [],
       isPublic: agent.is_public,
       createdBy: agent.created_by,
@@ -245,6 +338,10 @@ router.patch('/:id', authenticate, async (req: AuthRequest, res) => {
       updates.push(`system_prompt = $${paramIndex++}`);
       values.push(req.body.systemPrompt);
     }
+    if (req.body.welcomeMessage !== undefined) {
+      updates.push(`welcome_message = $${paramIndex++}`);
+      values.push(req.body.welcomeMessage);
+    }
     if (req.body.styles !== undefined) {
       updates.push(`styles = $${paramIndex++}`);
       values.push(req.body.styles);
@@ -281,6 +378,7 @@ router.patch('/:id', authenticate, async (req: AuthRequest, res) => {
       pricePerMessage: parseFloat(agent.price_per_message),
       category: agent.category,
       systemPrompt: agent.system_prompt,
+      welcomeMessage: agent.welcome_message || '',
       styles: agent.styles || [],
       isPublic: agent.is_public,
       createdBy: agent.created_by,

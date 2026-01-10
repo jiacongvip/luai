@@ -153,6 +153,15 @@ CREATE TABLE workflows (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Agent Workflows Table (Per-Agent visual editor graph)
+-- Stores the node/edge graph for an individual Agent (Coze-like builder).
+CREATE TABLE agent_workflows (
+  agent_id VARCHAR(255) PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+  nodes JSONB NOT NULL DEFAULT '[]'::jsonb,
+  edges JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Workflow Executions Table (Runtime)
 -- Logs every time a workflow is run.
 CREATE TABLE workflow_executions (

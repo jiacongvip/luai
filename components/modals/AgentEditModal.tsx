@@ -1,15 +1,24 @@
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Agent, Language } from '../../types';
 import { translations } from '../../utils/translations';
 import { generateSystemPrompt } from '../../services/geminiService';
-import { getAllTemplates, getPromptTemplate, PromptTemplate } from '../../utils/promptTemplates';
-import { X, Sparkles, Loader2, Zap, FileText, Upload, Plus, BookOpen } from 'lucide-react';
+import { getAllTemplates, PromptTemplate } from '../../utils/promptTemplates';
+import { X, Sparkles, Loader2, Zap, FileText, Upload, Plus, BookOpen, Eye, Edit3, Trash2, Save, Download, GitBranch, Layers } from 'lucide-react';
+import AgentWorkflowEditor from './AgentWorkflowEditor';
+import AgentBuilder from '../../views/AgentBuilder';
+
+interface KnowledgeFile {
+    name: string;
+    content: string;
+    type: string;
+    size: number;
+}
 
 interface AgentEditModalProps {
     agent: Agent;
     onClose: () => void;
-    onSave: (agent: Agent) => void;
+    onSave: (agent: Agent) => void | Promise<void>;
     language: Language;
     availableCategories: string[];
 }
@@ -21,6 +30,24 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
     const [showAIPromptInput, setShowAIPromptInput] = useState(false);
     const [showTemplateSelector, setShowTemplateSelector] = useState(false);
     const [newStyle, setNewStyle] = useState('');
+    const [showWorkflowEditor, setShowWorkflowEditor] = useState(false);
+    const [showAgentBuilder, setShowAgentBuilder] = useState(false);
+    
+    // 知识库相关状态
+    const [knowledgeFiles, setKnowledgeFiles] = useState<KnowledgeFile[]>(() => {
+        // 从 agent 的 knowledgeFiles 初始化（如果有的话）
+        return (agent.knowledgeFiles || []).map(name => ({
+            name,
+            content: '',
+            type: 'text/plain',
+            size: 0
+        }));
+    });
+    const [selectedFile, setSelectedFile] = useState<KnowledgeFile | null>(null);
+    const [isEditing, setIsEditing] = useState(false);
+    const [editContent, setEditContent] = useState('');
+    const [showPreview, setShowPreview] = useState(false);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const tCommon = translations[language]?.common || translations['en'].common;
     const t = translations[language]?.admin || translations['en'].admin;
@@ -71,6 +98,136 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
         setShowTemplateSelector(false);
     };
 
+    // 知识库文件上传
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const files = e.target.files;
+        if (!files || files.length === 0) return;
+
+        const newFiles: KnowledgeFile[] = [];
+        
+        for (const file of Array.from(files)) {
+            // 检查文件大小（最大 5MB）
+            if (file.size > 5 * 1024 * 1024) {
+                alert(language === 'zh' ? `文件 ${file.name} 太大，最大支持 5MB` : `File ${file.name} is too large. Maximum size is 5MB`);
+                continue;
+            }
+
+            // 读取文件内容
+            const content = await readFileAsText(file);
+            
+            newFiles.push({
+                name: file.name,
+                content,
+                type: file.type || 'text/plain',
+                size: file.size
+            });
+        }
+
+        setKnowledgeFiles(prev => [...prev, ...newFiles]);
+        
+        // 重置 input
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+    };
+
+    const readFileAsText = (file: File): Promise<string> => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            
+            // 根据文件类型选择读取方式
+            if (file.type.startsWith('text/') || 
+                file.name.endsWith('.json') || 
+                file.name.endsWith('.md') || 
+                file.name.endsWith('.txt') ||
+                file.name.endsWith('.csv') ||
+                file.name.endsWith('.xml') ||
+                file.name.endsWith('.yaml') ||
+                file.name.endsWith('.yml')) {
+                reader.readAsText(file);
+            } else {
+                // 对于二进制文件，读取为 Base64
+                reader.readAsDataURL(file);
+            }
+        });
+    };
+
+    // 预览文件
+    const handlePreview = (file: KnowledgeFile) => {
+        setSelectedFile(file);
+        setShowPreview(true);
+        setIsEditing(false);
+    };
+
+    // 编辑文件
+    const handleEdit = (file: KnowledgeFile) => {
+        setSelectedFile(file);
+        setEditContent(file.content);
+        setIsEditing(true);
+        setShowPreview(true);
+    };
+
+    // 保存编辑
+    const handleSaveEdit = () => {
+        if (selectedFile) {
+            setKnowledgeFiles(prev => prev.map(f => 
+                f.name === selectedFile.name 
+                    ? { ...f, content: editContent, size: new Blob([editContent]).size }
+                    : f
+            ));
+            setSelectedFile({ ...selectedFile, content: editContent });
+            setIsEditing(false);
+        }
+    };
+
+    // 删除文件
+    const handleDeleteFile = (fileName: string) => {
+        if (confirm(language === 'zh' ? `确定要删除 ${fileName} 吗？` : `Are you sure you want to delete ${fileName}?`)) {
+            setKnowledgeFiles(prev => prev.filter(f => f.name !== fileName));
+            if (selectedFile?.name === fileName) {
+                setSelectedFile(null);
+                setShowPreview(false);
+            }
+        }
+    };
+
+    // 下载文件
+    const handleDownload = (file: KnowledgeFile) => {
+        const blob = new Blob([file.content], { type: file.type });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file.name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    };
+
+    // 格式化文件大小
+    const formatFileSize = (bytes: number): string => {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    };
+
+    // 获取文件图标颜色
+    const getFileColor = (fileName: string): string => {
+        const ext = fileName.split('.').pop()?.toLowerCase();
+        switch (ext) {
+            case 'json': return 'text-yellow-500';
+            case 'md': return 'text-blue-500';
+            case 'txt': return 'text-gray-500';
+            case 'csv': return 'text-green-500';
+            case 'xml': case 'yaml': case 'yml': return 'text-orange-500';
+            default: return 'text-primary';
+        }
+    };
+
     const handleSave = () => {
         let finalData = { ...formData };
         
@@ -82,12 +239,18 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
             };
         }
         
+        // 更新知识库文件列表
+        finalData.knowledgeFiles = knowledgeFiles.map(f => f.name);
+        
+        // TODO: 这里应该调用 API 上传文件内容到后端
+        // 目前只是保存文件名列表
+        
         onSave(finalData);
     };
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-            <div className="bg-surface border border-border rounded-xl w-full max-w-4xl shadow-2xl flex flex-col h-[90vh]">
+            <div className="bg-surface border border-border rounded-xl w-full max-w-5xl shadow-2xl flex flex-col h-[90vh]">
                 <div className="p-5 border-b border-border flex justify-between items-center bg-background/50">
                     <h3 className="text-xl font-bold text-textMain">{t.agentModal.title}</h3>
                     <button onClick={onClose}><X size={24} className="text-textSecondary hover:text-textMain"/></button>
@@ -135,6 +298,18 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
                             <div className="flex items-center justify-between border-b border-border pb-2">
                                 <h4 className="font-bold text-primary">{t.agentModal.logic}</h4>
                                 <div className="flex gap-2">
+                                    <button 
+                                        onClick={() => setShowAgentBuilder(true)}
+                                        className="flex items-center gap-1.5 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-lg text-[10px] font-bold text-blue-500 hover:bg-blue-500 hover:text-white transition-all shadow-sm"
+                                    >
+                                        <Layers size={12}/> {language === 'zh' ? '可视化编排' : 'Visual Builder'}
+                                    </button>
+                                    <button 
+                                        onClick={() => setShowWorkflowEditor(true)}
+                                        className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-[10px] font-bold text-emerald-500 hover:bg-emerald-500 hover:text-white transition-all shadow-sm"
+                                    >
+                                        <GitBranch size={12}/> {language === 'zh' ? '工作流' : 'Workflow'}
+                                    </button>
                                     <button 
                                         onClick={() => setShowTemplateSelector(!showTemplateSelector)}
                                         className="flex items-center gap-1.5 px-3 py-1 bg-blue-500/10 border border-blue-500/20 rounded-lg text-[10px] font-bold text-blue-500 hover:bg-blue-500 hover:text-white transition-all shadow-sm"
@@ -247,19 +422,92 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
                                 </div>
                             </div>
                             
-                            <h4 className="font-bold text-primary border-b border-border pb-2 pt-4">{t.agentModal.knowledge}</h4>
-                            <div className="space-y-2">
-                                <p className="text-[10px] text-textSecondary">{t.agentModal.kbDesc}</p>
-                                <div className="flex gap-2 flex-wrap">
-                                    {formData.knowledgeFiles?.map((f, i) => (
-                                        <span key={i} className="px-2 py-1 bg-surface border border-border rounded text-xs text-textMain flex items-center gap-2">
-                                            <FileText size={12}/> {f}
-                                            <button onClick={() => setFormData({...formData, knowledgeFiles: formData.knowledgeFiles?.filter(file => file !== f)})} className="hover:text-red-500"><X size={12}/></button>
-                                        </span>
-                                    ))}
-                                    <button className="px-2 py-1 bg-primary/10 border border-primary/20 text-primary rounded text-xs flex items-center gap-1 hover:bg-primary/20 transition-colors">
-                                        <Upload size={12}/> {t.agentModal.uploadBtn}
+                            {/* --- KNOWLEDGE BASE SECTION --- */}
+                            <div className="space-y-3">
+                                <div className="flex items-center justify-between border-b border-border pb-2 pt-4">
+                                    <h4 className="font-bold text-primary">{t.agentModal.knowledge}</h4>
+                                    <input
+                                        type="file"
+                                        ref={fileInputRef}
+                                        onChange={handleFileUpload}
+                                        multiple
+                                        accept=".txt,.md,.json,.csv,.xml,.yaml,.yml"
+                                        className="hidden"
+                                    />
+                                    <button 
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-primary/10 border border-primary/20 text-primary rounded-lg text-xs font-bold hover:bg-primary hover:text-white transition-all"
+                                    >
+                                        <Upload size={14}/> {language === 'zh' ? '上传文件' : 'Upload'}
                                     </button>
+                                </div>
+                                
+                                <p className="text-[10px] text-textSecondary">
+                                    {language === 'zh' 
+                                        ? '支持 .txt, .md, .json, .csv, .xml, .yaml 格式，单个文件最大 5MB' 
+                                        : 'Supports .txt, .md, .json, .csv, .xml, .yaml files, max 5MB each'}
+                                </p>
+                                
+                                {/* 文件列表 */}
+                                <div className="space-y-2 max-h-48 overflow-y-auto">
+                                    {knowledgeFiles.length === 0 ? (
+                                        <div className="text-center py-6 bg-background/50 border border-dashed border-border rounded-lg">
+                                            <FileText size={24} className="mx-auto text-textSecondary mb-2 opacity-50"/>
+                                            <p className="text-xs text-textSecondary">
+                                                {language === 'zh' ? '暂无知识库文件' : 'No knowledge files yet'}
+                                            </p>
+                                            <p className="text-[10px] text-textSecondary mt-1">
+                                                {language === 'zh' ? '点击上方按钮上传文件' : 'Click the button above to upload'}
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        knowledgeFiles.map((file, i) => (
+                                            <div 
+                                                key={i} 
+                                                className="flex items-center justify-between p-3 bg-background border border-border rounded-lg hover:border-primary/50 transition-colors group"
+                                            >
+                                                <div className="flex items-center gap-3 flex-1 min-w-0">
+                                                    <FileText size={18} className={getFileColor(file.name)}/>
+                                                    <div className="flex-1 min-w-0">
+                                                        <p className="text-sm text-textMain font-medium truncate">{file.name}</p>
+                                                        <p className="text-[10px] text-textSecondary">
+                                                            {formatFileSize(file.size)} • {file.type || 'text/plain'}
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                    <button 
+                                                        onClick={() => handlePreview(file)}
+                                                        className="p-1.5 hover:bg-blue-500/10 text-blue-500 rounded-lg transition-colors"
+                                                        title={language === 'zh' ? '预览' : 'Preview'}
+                                                    >
+                                                        <Eye size={14}/>
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleEdit(file)}
+                                                        className="p-1.5 hover:bg-green-500/10 text-green-500 rounded-lg transition-colors"
+                                                        title={language === 'zh' ? '编辑' : 'Edit'}
+                                                    >
+                                                        <Edit3 size={14}/>
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDownload(file)}
+                                                        className="p-1.5 hover:bg-purple-500/10 text-purple-500 rounded-lg transition-colors"
+                                                        title={language === 'zh' ? '下载' : 'Download'}
+                                                    >
+                                                        <Download size={14}/>
+                                                    </button>
+                                                    <button 
+                                                        onClick={() => handleDeleteFile(file.name)}
+                                                        className="p-1.5 hover:bg-red-500/10 text-red-500 rounded-lg transition-colors"
+                                                        title={language === 'zh' ? '删除' : 'Delete'}
+                                                    >
+                                                        <Trash2 size={14}/>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -270,6 +518,104 @@ const AgentEditModal: React.FC<AgentEditModalProps> = ({ agent, onClose, onSave,
                     <button onClick={handleSave} className="px-6 py-2 bg-primary text-white rounded-lg text-sm font-bold shadow-lg shadow-primary/20 hover:brightness-110">{tCommon.save}</button>
                 </div>
             </div>
+
+            {/* 文件预览/编辑模态框 */}
+            {showPreview && selectedFile && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+                    <div className="bg-surface border border-border rounded-xl w-full max-w-3xl shadow-2xl flex flex-col max-h-[80vh]">
+                        <div className="p-4 border-b border-border flex justify-between items-center bg-background/50">
+                            <div className="flex items-center gap-3">
+                                <FileText size={20} className={getFileColor(selectedFile.name)}/>
+                                <div>
+                                    <h4 className="font-bold text-textMain">{selectedFile.name}</h4>
+                                    <p className="text-[10px] text-textSecondary">
+                                        {formatFileSize(selectedFile.size)} • {isEditing ? (language === 'zh' ? '编辑模式' : 'Edit Mode') : (language === 'zh' ? '预览模式' : 'Preview Mode')}
+                                    </p>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-2">
+                                {!isEditing && (
+                                    <button 
+                                        onClick={() => handleEdit(selectedFile)}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-green-500/10 border border-green-500/20 text-green-500 rounded-lg text-xs font-bold hover:bg-green-500 hover:text-white transition-all"
+                                    >
+                                        <Edit3 size={12}/> {language === 'zh' ? '编辑' : 'Edit'}
+                                    </button>
+                                )}
+                                {isEditing && (
+                                    <button 
+                                        onClick={handleSaveEdit}
+                                        className="flex items-center gap-1.5 px-3 py-1.5 bg-primary text-white rounded-lg text-xs font-bold hover:brightness-110 transition-all"
+                                    >
+                                        <Save size={12}/> {language === 'zh' ? '保存' : 'Save'}
+                                    </button>
+                                )}
+                                <button onClick={() => { setShowPreview(false); setIsEditing(false); }}>
+                                    <X size={20} className="text-textSecondary hover:text-textMain"/>
+                                </button>
+                            </div>
+                        </div>
+                        <div className="flex-1 overflow-auto p-4">
+                            {isEditing ? (
+                                <textarea
+                                    value={editContent}
+                                    onChange={e => setEditContent(e.target.value)}
+                                    className="w-full h-full min-h-[400px] bg-background border border-border rounded-lg p-4 font-mono text-sm text-textMain focus:border-primary outline-none resize-none"
+                                    spellCheck={false}
+                                />
+                            ) : (
+                                <pre className="w-full h-full min-h-[400px] bg-background border border-border rounded-lg p-4 font-mono text-sm text-textMain overflow-auto whitespace-pre-wrap break-words">
+                                    {selectedFile.content || (language === 'zh' ? '（文件内容为空或无法显示）' : '(File content is empty or cannot be displayed)')}
+                                </pre>
+                            )}
+                        </div>
+                        <div className="p-3 border-t border-border bg-background/50 flex justify-between items-center">
+                            <p className="text-[10px] text-textSecondary">
+                                {isEditing 
+                                    ? (language === 'zh' ? '编辑完成后点击保存按钮' : 'Click Save when done editing')
+                                    : (language === 'zh' ? '点击编辑按钮修改内容' : 'Click Edit to modify content')
+                                }
+                            </p>
+                            <button 
+                                onClick={() => { setShowPreview(false); setIsEditing(false); }}
+                                className="px-4 py-1.5 text-textSecondary hover:bg-surface rounded-lg text-sm"
+                            >
+                                {language === 'zh' ? '关闭' : 'Close'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* 工作流编辑器 */}
+            {showWorkflowEditor && (
+                <AgentWorkflowEditor
+                    agent={formData}
+                    language={language}
+                    onClose={() => setShowWorkflowEditor(false)}
+                    onSave={(updatedAgent, workflow) => {
+                        setFormData(updatedAgent);
+                        setShowWorkflowEditor(false);
+                        // TODO: 保存工作流数据到后端
+                        console.log('Workflow saved:', workflow);
+                    }}
+                />
+            )}
+
+            {/* 新版可视化编排器（类似扣子） */}
+            {showAgentBuilder && (
+                <AgentBuilder
+                    agent={formData}
+                    language={language}
+                    onClose={() => setShowAgentBuilder(false)}
+                    onSave={async (updatedAgent) => {
+                        setFormData(updatedAgent);
+                        // 等待保存完成再关闭（失败时会抛出异常，由 AgentBuilder 捕获并显示错误）
+                        await onSave(updatedAgent);
+                        setShowAgentBuilder(false);
+                    }}
+                />
+            )}
         </div>
     );
 };

@@ -173,7 +173,7 @@ router.get('/agents', async (req, res) => {
   try {
     const result = await query(
       `SELECT id, name, role, role_zh, description, description_zh, avatar, price_per_message,
-              category, system_prompt, styles, is_public, created_by, created_at, updated_at
+              category, system_prompt, welcome_message, styles, is_public, created_by, created_at, updated_at
        FROM agents
        ORDER BY created_at DESC`
     );
@@ -190,6 +190,7 @@ router.get('/agents', async (req, res) => {
         pricePerMessage: parseFloat(agent.price_per_message),
         category: agent.category,
         systemPrompt: agent.system_prompt,
+        welcomeMessage: agent.welcome_message || '',
         styles: agent.styles || [],
         isPublic: agent.is_public,
         createdBy: agent.created_by,

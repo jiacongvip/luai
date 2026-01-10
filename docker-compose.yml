@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   # PostgreSQL 数据库
+  # 如果需要向量搜索功能，可以改用 pgvector/pgvector:pg16 镜像
   postgres:
     image: postgres:16-alpine
     container_name: nexus-postgres

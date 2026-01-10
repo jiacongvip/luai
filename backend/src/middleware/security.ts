@@ -156,6 +156,18 @@ export const detectSqlInjection = (value: string): boolean => {
 // SQL 注入防护中间件
 export const sqlInjectionProtection = (req: Request, res: Response, next: NextFunction) => {
   const checkObject = (obj: any, path: string): string | null => {
+    // 对于某些允许包含自然语言 / SQL 关键词的字段，跳过检测
+    // 例如：智能体的人设提示词、欢迎语等
+    const allowListPrefixes = [
+      'body.systemPrompt',
+      'body.welcomeMessage',
+      'body.description',
+      'body.descriptionZh',
+    ];
+    if (allowListPrefixes.some(prefix => path.startsWith(prefix))) {
+      return null;
+    }
+
     if (typeof obj === 'string' && detectSqlInjection(obj)) {
       return path;
     }

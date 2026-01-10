@@ -1051,6 +1051,37 @@ const SettingsTab: React.FC<SettingsTabProps> = ({ language, agentCategories, on
                                 />
                             </div>
 
+                            {/* Embedding 模型配置 */}
+                            <div className="border-t border-border pt-4">
+                                <h4 className="text-sm font-bold text-textMain mb-3 flex items-center gap-2">
+                                    <Database size={14} className="text-purple-500" />
+                                    {language === 'zh' ? '知识库配置' : 'Knowledge Base Config'}
+                                </h4>
+                                <div>
+                                    <label className="block text-xs text-textSecondary mb-1">
+                                        {language === 'zh' ? 'Embedding 模型（用于知识库语义搜索）' : 'Embedding Model (for knowledge base semantic search)'}
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={editingConfig.modelMapping?.embedding || ''}
+                                        onChange={(e) => setEditingConfig({
+                                            ...editingConfig,
+                                            modelMapping: {
+                                                ...editingConfig.modelMapping,
+                                                embedding: e.target.value,
+                                            },
+                                        })}
+                                        className="w-full bg-background border border-border rounded-lg px-3 py-2 text-textMain focus:border-primary outline-none font-mono text-sm"
+                                        placeholder={language === 'zh' ? '例如：Qwen/Qwen3-Embedding-8B' : 'e.g. Qwen/Qwen3-Embedding-8B'}
+                                    />
+                                    <p className="text-xs text-textSecondary mt-1">
+                                        {language === 'zh' 
+                                            ? '常用模型：Qwen/Qwen3-Embedding-8B、text-embedding-3-small、BAAI/bge-large-zh-v1.5' 
+                                            : 'Common models: Qwen/Qwen3-Embedding-8B, text-embedding-3-small, BAAI/bge-large-zh-v1.5'}
+                                    </p>
+                                </div>
+                            </div>
+
                             {/* 请求配置 */}
                             <div className="border-t border-border pt-4">
                                 <h4 className="text-sm font-bold text-textMain mb-3">

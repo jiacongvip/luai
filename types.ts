@@ -76,6 +76,7 @@ export interface Agent {
   category: string; // Changed from fixed union type to string to support custom categories
   knowledgeFiles?: string[];
   styles?: string[]; // NEW: Presets for tone/style (e.g. "Sarcastic", "Professional")
+  welcomeMessage?: string; // NEW: Custom welcome message shown when chat starts
 }
 
 export interface AgentSquad {
@@ -215,7 +216,8 @@ export enum AppRoute {
   ADMIN = 'admin',
   STUDIO = 'studio',
   TRENDS = 'trends',
-  SIMULATOR = 'simulator' 
+  SIMULATOR = 'simulator',
+  PERSONACRAFT = 'personacraft' // PersonaCraft AI 知识库优化
 }
 
 // 管理后台路由

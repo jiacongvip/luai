@@ -19,6 +19,7 @@ import apiConfigRoutes from './routes/api-config.js';
 import preferencesRoutes from './routes/preferences.js';
 import systemSettingsRoutes from './routes/system-settings.js';
 import debugRoutes from './routes/debug.js';
+import personacraftRoutes from './routes/personacraft.js';
 import { securityHeaders, xssProtection, sqlInjectionProtection, rateLimitPresets } from './middleware/security.js';
 import { swaggerDocument } from './swagger.js';
 
@@ -138,6 +139,7 @@ app.use('/api/admin/api-configs', apiConfigRoutes); // API 配置管理
 app.use('/api/preferences', preferencesRoutes); // 用户偏好设置
 app.use('/api/system-settings', systemSettingsRoutes); // 系统级全局设置
 app.use('/api/debug', debugRoutes); // SSE 自检（排查代理缓冲/首包问题）
+app.use('/api/personacraft', personacraftRoutes); // PersonaCraft AI 知识库优化
 
 // 错误处理
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -170,6 +172,18 @@ const server = app.listen(PORT, async () => {
     console.log('✅ Interactive options column migrated');
   } catch (error) {
     console.error('⚠️ Failed to migrate interactive_options column:', error);
+  }
+  
+  // 迁移 agents.welcome_message 字段（欢迎语）
+  try {
+    const { query } = await import('./db/connection.js');
+    await query(`
+      ALTER TABLE agents 
+      ADD COLUMN IF NOT EXISTS welcome_message TEXT
+    `);
+    console.log('✅ Agents welcome_message column migrated');
+  } catch (error) {
+    console.error('⚠️ Failed to migrate welcome_message column:', error);
   }
   
   // 初始化 WebSocket 服务（类似 ChatGPT、Claude 的实现）
