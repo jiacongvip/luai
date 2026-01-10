@@ -1,16 +1,20 @@
 // API 客户端配置
-// 自动检测环境：生产环境使用当前域名的 /api，开发环境使用 localhost
+// 自动检测环境：生产环境使用后端服务地址，开发环境使用 localhost
 const getApiBaseUrl = () => {
-  // 如果设置了环境变量，优先使用
-  if (import.meta.env.VITE_API_URL) {
-    return import.meta.env.VITE_API_URL;
+  // 如果设置了环境变量且不为空，优先使用
+  const envUrl = import.meta.env.VITE_API_URL;
+  if (envUrl && envUrl.length > 0) {
+    return envUrl;
   }
   
-  // 生产环境：使用后端服务地址
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
-    // Railway 部署：前端和后端是分开的服务
-    // 后端地址需要在这里配置
-    return 'https://luai-production.up.railway.app/api';
+  // 生产环境检测：非 localhost 域名
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    // Railway 或其他生产环境
+    if (hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      // Railway 部署：使用后端服务地址
+      return 'https://luai-production.up.railway.app/api';
+    }
   }
   
   // 开发环境
@@ -18,6 +22,7 @@ const getApiBaseUrl = () => {
 };
 
 const API_BASE_URL = getApiBaseUrl();
+console.log('🔗 API Base URL:', API_BASE_URL);
 
 // 延迟导入logger，避免循环依赖
 let logger: any = null;
