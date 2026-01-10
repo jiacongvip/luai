@@ -6,20 +6,51 @@ dotenv.config();
 const { Pool } = pg;
 
 // 获取数据库连接字符串
-const databaseUrl = process.env.DATABASE_URL;
+// 优先使用 DATABASE_URL，如果不存在则使用其他 PostgreSQL 环境变量
+let databaseUrl = process.env.DATABASE_URL;
+
+// 调试：打印所有相关环境变量（隐藏敏感信息）
+console.log('🔍 Database environment variables:');
+console.log('  DATABASE_URL:', databaseUrl ? `${databaseUrl.substring(0, 30)}...` : 'NOT SET');
+console.log('  PGHOST:', process.env.PGHOST || 'NOT SET');
+console.log('  PGPORT:', process.env.PGPORT || 'NOT SET');
+console.log('  PGDATABASE:', process.env.PGDATABASE || 'NOT SET');
+console.log('  PGUSER:', process.env.PGUSER || 'NOT SET');
+
 if (!databaseUrl) {
-  console.error('❌ DATABASE_URL environment variable is not set!');
-  throw new Error('DATABASE_URL is required');
+  // 如果没有 DATABASE_URL，尝试从其他环境变量构建
+  if (process.env.PGHOST && process.env.PGDATABASE && process.env.PGUSER && process.env.PGPASSWORD) {
+    const port = process.env.PGPORT || '5432';
+    databaseUrl = `postgresql://${process.env.PGUSER}:${process.env.PGPASSWORD}@${process.env.PGHOST}:${port}/${process.env.PGDATABASE}`;
+    console.log('⚠️  Using PostgreSQL environment variables to build connection string');
+  } else {
+    console.error('❌ DATABASE_URL environment variable is not set!');
+    console.error('❌ Also missing required PostgreSQL environment variables (PGHOST, PGDATABASE, etc.)');
+    throw new Error('DATABASE_URL is required');
+  }
 }
 
 // 调试：打印连接信息（隐藏密码）
-const urlObj = new URL(databaseUrl);
-const maskedUrl = `${urlObj.protocol}//${urlObj.username}:***@${urlObj.hostname}:${urlObj.port}${urlObj.pathname}`;
-console.log('🔗 Database connection:', maskedUrl);
+try {
+  const urlObj = new URL(databaseUrl);
+  const maskedUrl = `${urlObj.protocol}//${urlObj.username}:***@${urlObj.hostname}:${urlObj.port}${urlObj.pathname}`;
+  console.log('🔗 Database connection:', maskedUrl);
+  console.log('🔗 Full connection string length:', databaseUrl.length);
+} catch (urlError) {
+  console.error('❌ Invalid DATABASE_URL format:', urlError);
+  throw new Error(`Invalid DATABASE_URL: ${urlError}`);
+}
 
 // 创建数据库连接池
+// 明确指定使用 connectionString，避免 pg 库使用其他环境变量
 export const pool = new Pool({
   connectionString: databaseUrl,
+  // 明确禁用环境变量，强制使用 connectionString
+  host: undefined,
+  port: undefined,
+  database: undefined,
+  user: undefined,
+  password: undefined,
   // 连接池配置
   max: 20, // 最大连接数
   idleTimeoutMillis: 30000,
