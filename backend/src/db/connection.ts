@@ -31,31 +31,41 @@ if (!databaseUrl) {
 }
 
 // 调试：打印连接信息（隐藏密码）
+let poolConfig: any;
 try {
   const urlObj = new URL(databaseUrl);
   const maskedUrl = `${urlObj.protocol}//${urlObj.username}:***@${urlObj.hostname}:${urlObj.port}${urlObj.pathname}`;
   console.log('🔗 Database connection:', maskedUrl);
   console.log('🔗 Full connection string length:', databaseUrl.length);
+  
+  // 手动解析 URL，避免 pg 库解析问题
+  poolConfig = {
+    host: urlObj.hostname,
+    port: parseInt(urlObj.port || '5432', 10),
+    database: urlObj.pathname.replace(/^\//, ''), // 移除前导斜杠
+    user: urlObj.username,
+    password: urlObj.password,
+    // 连接池配置
+    max: 20, // 最大连接数
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+  };
+  
+  console.log('🔗 Parsed config:', {
+    host: poolConfig.host,
+    port: poolConfig.port,
+    database: poolConfig.database,
+    user: poolConfig.user,
+    password: poolConfig.password ? '***' : 'NOT SET',
+  });
 } catch (urlError) {
   console.error('❌ Invalid DATABASE_URL format:', urlError);
   throw new Error(`Invalid DATABASE_URL: ${urlError}`);
 }
 
 // 创建数据库连接池
-// 明确指定使用 connectionString，避免 pg 库使用其他环境变量
-export const pool = new Pool({
-  connectionString: databaseUrl,
-  // 明确禁用环境变量，强制使用 connectionString
-  host: undefined,
-  port: undefined,
-  database: undefined,
-  user: undefined,
-  password: undefined,
-  // 连接池配置
-  max: 20, // 最大连接数
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 2000,
-});
+// 使用手动解析的配置，而不是 connectionString
+export const pool = new Pool(poolConfig);
 
 // 测试数据库连接
 pool.on('connect', () => {
